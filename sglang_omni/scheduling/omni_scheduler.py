@@ -77,6 +77,122 @@ _PENDING_STREAM_REQUEST_LIMIT = 10000
 _PENDING_STREAM_REQUEST_RETAINED = 5000
 
 
+class GammaAdaController:
+    """Online estimator for the UniBoost boost parameter ``gamma`` (gamma-Ada).
+
+    Watches the observed end-to-end response-time distribution and adapts
+    ``gamma`` to the workload's tail shape, so the scheduler need not have a
+    per-workload gamma tuned by hand:
+
+    * a **heavy** tail (a few requests far slower than the p95 body) means
+      shortest-job-first-style boosting helps, so gamma is pushed **down**
+      toward ``gamma_min`` (more SJF);
+    * a **light/flat** tail (p99 close to p95) means reordering buys little and
+      FCFS best protects the tail, so gamma is pushed **up** toward
+      ``gamma_max``.
+
+    The tail shape is summarized by the log-linear slope of the response-time
+    CDF over the paper's ``[t95, t99]`` band. With ``r = t99 / t95 >= 1`` the
+    excess ``ln(r)`` is the slope proxy (0 for a flat tail, growing as the tail
+    fattens); a heavier tail ⇒ smaller target gamma via
+
+        target = gamma_max / (1 + tail_sensitivity * max(r - 1, 0)).
+
+    The target is EMA-smoothed into the live gamma so the control loop cannot
+    oscillate. Pure and side-effect free apart from its own ring buffer, so it
+    is unit-testable without a scheduler or GPU.
+    """
+
+    __slots__ = (
+        "gamma",
+        "gamma_min",
+        "gamma_max",
+        "beta",
+        "tail_sensitivity",
+        "interval_s",
+        "min_samples",
+        "_samples",
+        "_last_update_t",
+    )
+
+    def __init__(
+        self,
+        *,
+        gamma_init: float,
+        gamma_min: float = 1.0,
+        gamma_max: float = 200.0,
+        beta: float = 0.3,
+        tail_sensitivity: float = 4.0,
+        interval_s: float = 5.0,
+        window: int = 2000,
+        min_samples: int = 200,
+    ) -> None:
+        from collections import deque as _deque
+
+        # gamma_min must stay strictly positive: b_gamma divides by gamma.
+        self.gamma_min = max(float(gamma_min), 1e-6)
+        self.gamma_max = max(float(gamma_max), self.gamma_min)
+        self.gamma = min(max(float(gamma_init), self.gamma_min), self.gamma_max)
+        self.beta = min(max(float(beta), 0.0), 1.0)
+        self.tail_sensitivity = max(float(tail_sensitivity), 0.0)
+        self.interval_s = max(float(interval_s), 0.0)
+        self.min_samples = max(int(min_samples), 1)
+        self._samples: Any = _deque(maxlen=max(int(window), self.min_samples))
+        self._last_update_t = 0.0
+
+    def record(self, latency_s: float) -> None:
+        """Record one completed request's end-to-end latency (seconds)."""
+        if latency_s > 0.0:
+            self._samples.append(float(latency_s))
+
+    @staticmethod
+    def _percentile(sorted_vals: list[float], q: float) -> float:
+        """Linear-interpolated percentile q in [0,1] over a sorted list."""
+        n = len(sorted_vals)
+        if n == 1:
+            return sorted_vals[0]
+        pos = q * (n - 1)
+        lo = int(pos)
+        hi = min(lo + 1, n - 1)
+        frac = pos - lo
+        return sorted_vals[lo] * (1.0 - frac) + sorted_vals[hi] * frac
+
+    def _target_gamma(self) -> float:
+        vals = sorted(self._samples)
+        t95 = self._percentile(vals, 0.95)
+        t99 = self._percentile(vals, 0.99)
+        if t95 <= 0.0:
+            return self.gamma_max
+        ratio = t99 / t95
+        excess = ratio - 1.0 if ratio > 1.0 else 0.0
+        target = self.gamma_max / (1.0 + self.tail_sensitivity * excess)
+        if target < self.gamma_min:
+            return self.gamma_min
+        if target > self.gamma_max:
+            return self.gamma_max
+        return target
+
+    def maybe_update(self, now: float) -> float | None:
+        """Re-fit gamma if the interval elapsed and enough samples exist.
+
+        Returns the new (EMA-smoothed) gamma when it updates, else ``None``.
+        Cheap to call every scheduler iteration: it early-outs on the clock.
+        """
+        if now - self._last_update_t < self.interval_s:
+            return None
+        if len(self._samples) < self.min_samples:
+            return None
+        self._last_update_t = now
+        target = self._target_gamma()
+        self.gamma = (1.0 - self.beta) * self.gamma + self.beta * target
+        # Stay strictly positive and in range regardless of float drift.
+        if self.gamma < self.gamma_min:
+            self.gamma = self.gamma_min
+        elif self.gamma > self.gamma_max:
+            self.gamma = self.gamma_max
+        return self.gamma
+
+
 class _PendingStreamIngress:
     """Stream input buffered for a request the scheduler has not admitted."""
 
@@ -198,6 +314,13 @@ class OmniScheduler:
         prefill_coalesce_when_idle: bool = False,
         boost_gamma: float = 0.0,
         boost_alpha_us_per_token: float = 64.0,
+        boost_gamma_ada: bool = False,
+        boost_gamma_min: float = 1.0,
+        boost_gamma_max: float = 200.0,
+        boost_gamma_ada_interval_s: float = 5.0,
+        boost_gamma_ada_window: int = 2000,
+        boost_gamma_ada_min_samples: int = 200,
+        boost_gamma_ada_beta: float = 0.3,
         request_build_max_workers: int = 1,
         request_build_max_pending: int | None = None,
         shutdown_callback: Callable[[], None] | None = None,
@@ -341,6 +464,41 @@ class OmniScheduler:
                 self.boost_gamma,
                 self.boost_alpha_s_per_token * 1e6,
             )
+
+        # gamma-Ada: online self-tuning of the boost gamma from the observed
+        # response-time tail (UniBoost phase 4). Requires boosting to be enabled
+        # with a strictly positive starting gamma -- the enable gate is snapshot
+        # at init, so gamma-Ada steers within [gamma_min, gamma_max] but can
+        # never turn boosting on from a cold gamma == 0. Off by default.
+        self.boost_gamma_controller: GammaAdaController | None = None
+        if boost_gamma_ada:
+            if not self.boost_enabled:
+                logger.warning(
+                    "gamma-Ada requested but boost_gamma=%s is not enabled "
+                    "(needs boost_gamma > 0 and tp_size == 1 as a starting "
+                    "point); gamma-Ada is inactive",
+                    boost_gamma,
+                )
+            else:
+                self.boost_gamma_controller = GammaAdaController(
+                    gamma_init=self.boost_gamma,
+                    gamma_min=boost_gamma_min,
+                    gamma_max=boost_gamma_max,
+                    beta=boost_gamma_ada_beta,
+                    interval_s=boost_gamma_ada_interval_s,
+                    window=boost_gamma_ada_window,
+                    min_samples=boost_gamma_ada_min_samples,
+                )
+                logger.info(
+                    "gamma-Ada ENABLED: adapting gamma in [%.4g, %.4g] every "
+                    "%.1f s (window=%d, min_samples=%d, beta=%.2f)",
+                    self.boost_gamma_controller.gamma_min,
+                    self.boost_gamma_controller.gamma_max,
+                    boost_gamma_ada_interval_s,
+                    boost_gamma_ada_window,
+                    boost_gamma_ada_min_samples,
+                    boost_gamma_ada_beta,
+                )
 
         # Token / memory info (upstream reads from tp_worker.get_worker_info)
         mr = tp_worker.model_runner
@@ -1241,6 +1399,22 @@ class OmniScheduler:
         now = time.perf_counter()
         waiting.sort(key=lambda req: self._boost_priority(req, now))
 
+    def _maybe_update_boost_gamma(self) -> None:
+        """gamma-Ada tick: re-fit the live boost gamma from the observed tail.
+
+        Called once per event-loop iteration; the controller early-outs on its
+        own wall-clock interval, so this is cheap. Mutating ``self.boost_gamma``
+        takes effect on the next ``get_new_batch_prefill`` pass because
+        ``_boost_value`` reads gamma live.
+        """
+        controller = self.boost_gamma_controller
+        if controller is None:
+            return
+        new_gamma = controller.maybe_update(time.perf_counter())
+        if new_gamma is not None:
+            self.boost_gamma = new_gamma
+            logger.debug("gamma-Ada updated boost gamma -> %.4g /s", new_gamma)
+
     def get_new_batch_prefill(self, running_batch):
         # Note: (maydomine) batch prefill admissions to amortize the fixed step
         # cost; the oldest-request deadline survives partial admission and aborts.
@@ -1508,6 +1682,15 @@ class OmniScheduler:
                     # terminalization its sole cleanup owner without hiding
                     # request data from stream ingress before cleanup finishes.
                     req._omni_terminal_claimed = True
+
+            # gamma-Ada: record this request's end-to-end latency exactly once,
+            # on the non-aborted terminal path (the claim above is the
+            # single-owner gate). Uses the omni arrival stamp; aborts are
+            # excluded so a cancelled request does not skew the tail estimate.
+            if self.boost_gamma_controller is not None and not is_aborted:
+                arrival = getattr(req, "_coalesce_enqueue_t", None)
+                if arrival is not None:
+                    self.boost_gamma_controller.record(time.perf_counter() - arrival)
 
             if is_aborted:
                 # note (Gaokai): an abort landing mid-step finishes here via
@@ -2227,6 +2410,7 @@ class OmniScheduler:
                 time.sleep(0.001)
 
             self.last_batch = batch
+            self._maybe_update_boost_gamma()
             if envs.SGLANG_ENABLE_STRICT_MEM_CHECK_DURING_BUSY.get():
                 self.self_check_during_busy()
 
@@ -2520,6 +2704,7 @@ class OmniScheduler:
                     time.sleep(0.001)
 
             self.last_batch = batch
+            self._maybe_update_boost_gamma()
             if envs.SGLANG_ENABLE_STRICT_MEM_CHECK_DURING_BUSY.get():
                 self.self_check_during_busy()
 

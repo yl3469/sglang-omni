@@ -474,6 +474,9 @@ def create_sglang_tts_engine_executor(
     prefill_coalesce_wait_ms: float = 60.0,
     boost_gamma: float = 0.0,
     boost_alpha_us_per_token: float = 64.0,
+    boost_gamma_ada: bool = False,
+    boost_gamma_min: float = 1.0,
+    boost_gamma_max: float = 200.0,
     total_gpu_memory_fraction: float | None = None,
 ):
     """sglang-backed AR engine for Higgs TTS."""
@@ -492,6 +495,9 @@ def create_sglang_tts_engine_executor(
         prefill_coalesce_wait_ms=prefill_coalesce_wait_ms,
         boost_gamma=boost_gamma,
         boost_alpha_us_per_token=boost_alpha_us_per_token,
+        boost_gamma_ada=boost_gamma_ada,
+        boost_gamma_min=boost_gamma_min,
+        boost_gamma_max=boost_gamma_max,
         total_gpu_memory_fraction=total_gpu_memory_fraction,
     ).build(
         model_path,

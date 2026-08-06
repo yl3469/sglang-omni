@@ -44,6 +44,9 @@ class HiggsTtsEngineBuilder(TtsEngineBuilder):
         prefill_coalesce_wait_ms: float = 60.0,
         boost_gamma: float = 0.0,
         boost_alpha_us_per_token: float = 64.0,
+        boost_gamma_ada: bool = False,
+        boost_gamma_min: float = 1.0,
+        boost_gamma_max: float = 200.0,
         total_gpu_memory_fraction: float | None = None,
     ) -> None:
         if total_gpu_memory_fraction is not None and not (
@@ -65,6 +68,9 @@ class HiggsTtsEngineBuilder(TtsEngineBuilder):
         self.prefill_coalesce_wait_ms = prefill_coalesce_wait_ms
         self.boost_gamma = boost_gamma
         self.boost_alpha_us_per_token = boost_alpha_us_per_token
+        self.boost_gamma_ada = boost_gamma_ada
+        self.boost_gamma_min = boost_gamma_min
+        self.boost_gamma_max = boost_gamma_max
         self.total_gpu_memory_fraction = total_gpu_memory_fraction
         self.model: Any | None = None
 
@@ -165,6 +171,9 @@ class HiggsTtsEngineBuilder(TtsEngineBuilder):
             "prefill_coalesce_wait_ms": self.prefill_coalesce_wait_ms,
             "boost_gamma": self.boost_gamma,
             "boost_alpha_us_per_token": self.boost_alpha_us_per_token,
+            "boost_gamma_ada": self.boost_gamma_ada,
+            "boost_gamma_min": self.boost_gamma_min,
+            "boost_gamma_max": self.boost_gamma_max,
         }
 
     def post_scheduler_setup(self, scheduler: Any, model_runner: Any) -> None:
