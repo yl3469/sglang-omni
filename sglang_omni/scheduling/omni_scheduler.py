@@ -298,6 +298,15 @@ class OmniScheduler:
         self.prefill_coalesce_requests = requests
         self.prefill_coalesce_wait_s = wait_ms / 1e3
         self.prefill_coalesce_when_idle = bool(prefill_coalesce_when_idle)
+        if self.prefill_coalesce_requests > 1:
+            logger.info(
+                "Prefill admission coalescing ENABLED: hold prefill until "
+                "%d requests wait or the oldest has waited %.1f ms "
+                "(coalesce_when_idle=%s)",
+                self.prefill_coalesce_requests,
+                self.prefill_coalesce_wait_s * 1e3,
+                self.prefill_coalesce_when_idle,
+            )
 
         # Token / memory info (upstream reads from tp_worker.get_worker_info)
         mr = tp_worker.model_runner

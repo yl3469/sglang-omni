@@ -113,6 +113,15 @@ def test_qwen3_asr_stage_default_enables_async_decode() -> None:
     assert signature.parameters["async_decode_min_batch_size"].default == 2
 
 
+def test_qwen3_asr_stage_default_disables_prefill_coalescing() -> None:
+    # Prefill coalescing must stay opt-in: the default preserves the historical
+    # per-request admission behavior (K=0 disables the gate).
+    signature = inspect.signature(create_sglang_qwen3_asr_executor)
+
+    assert signature.parameters["prefill_coalesce_requests"].default == 0
+    assert signature.parameters["prefill_coalesce_wait_ms"].default == 60.0
+
+
 def test_qwen3_asr_threads_explicit_cuda_graph_bs(monkeypatch) -> None:
     build_kwargs: dict[str, object] = {}
     adapter_kwargs: dict[str, object] = {}
@@ -203,6 +212,8 @@ def test_qwen3_asr_threads_explicit_cuda_graph_bs(monkeypatch) -> None:
         enable_async_decode=False,
         async_decode_min_batch_size=4,
         server_args_overrides={"context_length": 2048},
+        prefill_coalesce_requests=4,
+        prefill_coalesce_wait_ms=10.0,
     )
 
     assert build_kwargs["cuda_graph_max_bs"] == 32
@@ -210,4 +221,8 @@ def test_qwen3_asr_threads_explicit_cuda_graph_bs(monkeypatch) -> None:
     assert adapter_kwargs["context_length"] == 2048
     assert scheduler.enable_async_decode is False
     assert scheduler.async_decode_min_batch_size == 4
+    # Prefill-coalescing knobs must reach the OmniScheduler so open-loop /
+    # bursty ASR traffic can amortize the fixed per-prefill-step cost.
+    assert scheduler.prefill_coalesce_requests == 4
+    assert scheduler.prefill_coalesce_wait_ms == 10.0
     assert scheduler.shutdown_callback is fake_encoder_service.close

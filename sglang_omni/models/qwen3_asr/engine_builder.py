@@ -28,7 +28,9 @@ class Qwen3ASREngineBuilder(AsrEngineBuilder):
         max_new_tokens: int,
         enable_async_decode: bool,
         async_decode_min_batch_size: int,
-        mem_fraction_static: float | None,
+        prefill_coalesce_requests: int = 0,
+        prefill_coalesce_wait_ms: float = 60.0,
+        mem_fraction_static: float | None = None,
         mm_embedding_cache_size_bytes: int,
         enable_torch_compile: bool,
         mm_attention_backend: str | None,
@@ -52,6 +54,8 @@ class Qwen3ASREngineBuilder(AsrEngineBuilder):
         self.max_new_tokens = max_new_tokens
         self.enable_async_decode = enable_async_decode
         self.async_decode_min_batch_size = async_decode_min_batch_size
+        self.prefill_coalesce_requests = prefill_coalesce_requests
+        self.prefill_coalesce_wait_ms = prefill_coalesce_wait_ms
         self.mem_fraction_static = mem_fraction_static
         self.mm_embedding_cache_size_bytes = mm_embedding_cache_size_bytes
         self.enable_torch_compile = enable_torch_compile
@@ -160,6 +164,8 @@ class Qwen3ASREngineBuilder(AsrEngineBuilder):
         return {
             "enable_async_decode": self.enable_async_decode,
             "async_decode_min_batch_size": self.async_decode_min_batch_size,
+            "prefill_coalesce_requests": self.prefill_coalesce_requests,
+            "prefill_coalesce_wait_ms": self.prefill_coalesce_wait_ms,
             "request_build_max_workers": self.request_build_max_workers,
             "request_build_max_pending": self.request_build_max_pending,
         }
