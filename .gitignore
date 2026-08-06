@@ -2,7 +2,8 @@
 __pycache__/
 *.py[cod]
 *$py.class
-
+*.wav
+*/runs/*
 # Distribution / packaging
 dist/
 build/
@@ -47,3 +48,4 @@ benchmarks/eval/*.edit.lock
 asr_seedtts_results.json
 .claude/*
 !.claude/skills/
+_opt/runs/async_minbs1/sweep/rate2-20260806-030601-904965/client0/audio/common_voice_en_120405-common_voice_en_120406.wav

@@ -14,6 +14,7 @@ inheriting from ``SGLangScheduler``.
 from __future__ import annotations
 
 import logging
+import math
 import queue as _queue_mod
 import threading
 import time
@@ -195,6 +196,8 @@ class OmniScheduler:
         prefill_coalesce_requests: int = 0,
         prefill_coalesce_wait_ms: float = 60.0,
         prefill_coalesce_when_idle: bool = False,
+        boost_gamma: float = 0.0,
+        boost_alpha_us_per_token: float = 64.0,
         request_build_max_workers: int = 1,
         request_build_max_pending: int | None = None,
         shutdown_callback: Callable[[], None] | None = None,
@@ -306,6 +309,37 @@ class OmniScheduler:
                 self.prefill_coalesce_requests,
                 self.prefill_coalesce_wait_s * 1e3,
                 self.prefill_coalesce_when_idle,
+            )
+
+        # Tail-aware admission boosting (UniBoost, ICML'26). Reorders the prefill
+        # waiting queue by a soft priority Phi(i) = arrival_i - b_gamma(w_i),
+        # where w_i is the request's *effective* (uncached) prefill work in
+        # seconds and b_gamma(w) = (1/gamma) * ln(1 / (1 - e^{-gamma w})) is a
+        # decreasing, convex boost. gamma -> inf recovers FCFS (protect the
+        # tail); gamma -> 0 recovers shortest-job-first (chase the mean); a mid
+        # gamma suppresses the P99 without any decode-length prediction. Off by
+        # default (gamma == 0). Gated to tp_size == 1 because the arrival anchor
+        # is a per-rank wall clock (same lockstep concern as coalescing).
+        self.boost_gamma = float(boost_gamma)
+        # Per-uncached-token prefill cost, converting token counts to the
+        # seconds unit shared with the arrival clock.
+        self.boost_alpha_s_per_token = float(boost_alpha_us_per_token) / 1e6
+        if self.boost_gamma > 0.0 and int(server_args.tp_size) > 1:
+            logger.warning(
+                "Tail-aware admission boosting is disabled for "
+                "tp_size=%s: the boost anchors on each rank's local arrival "
+                "clock, so ranks could disagree on queue order and break "
+                "lockstep scheduling",
+                server_args.tp_size,
+            )
+            self.boost_gamma = 0.0
+        self.boost_enabled = self.boost_gamma > 0.0
+        if self.boost_enabled:
+            logger.info(
+                "Tail-aware admission boosting ENABLED: gamma=%.4g /s, "
+                "alpha=%.1f us/token",
+                self.boost_gamma,
+                self.boost_alpha_s_per_token * 1e6,
             )
 
         # Token / memory info (upstream reads from tp_worker.get_worker_info)
@@ -1159,12 +1193,62 @@ class OmniScheduler:
         self.running_batch = plan.running_batch
         return plan.batch_to_run
 
+    def _boost_value(self, work_tokens: int) -> float:
+        """Soft priority boost b_gamma(w) in seconds (UniBoost).
+
+        ``b_gamma(w) = (1/gamma) * ln(1 / (1 - e^{-gamma w}))`` on the effective
+        work ``w = alpha * uncached_tokens`` (in seconds). Decreasing and convex
+        in w: large when little work remains (short jobs get pulled forward),
+        decaying to ~0 as work grows (long jobs drift back to their FCFS rank so
+        they are never starved).
+        """
+        w = self.boost_alpha_s_per_token * max(work_tokens, 0)
+        if w <= 0.0:
+            # No uncached work => maximal boost; clamp to a large finite value so
+            # the sort key stays orderable.
+            return 1e9
+        gw = self.boost_gamma * w
+        # 1 - e^{-gw} in (0, 1]; guard the tiny-gw underflow with expm1.
+        denom = -math.expm1(-gw)  # == 1 - e^{-gw}, accurate for small gw
+        if denom <= 0.0:
+            return 1e9
+        return -math.log(denom) / self.boost_gamma
+
+    def _boost_priority(self, req: Any, now: float) -> float:
+        """Phi(i) = arrival_i - b_gamma(effective_work_i); lower = serve sooner."""
+        arrival = getattr(req, "_coalesce_enqueue_t", None)
+        if arrival is None:
+            arrival = req._coalesce_enqueue_t = now
+        prompt_len = len(req.origin_input_ids)
+        # Cache-aware effective work: subtract the radix-matched prefix so a
+        # request whose prompt is mostly a cache hit is treated as short work
+        # (UniBoost cache extension w_tilde = max(w, s_pre - h)).
+        cached = getattr(req, "num_matched_prefix_tokens", 0) or 0
+        uncached = prompt_len - int(cached)
+        return arrival - self._boost_value(uncached)
+
+    def _apply_boost_ordering(self) -> None:
+        """Reorder the prefill waiting queue by tail-aware boost priority.
+
+        Sorts in place ahead of upstream ``get_new_batch_prefill`` (which, under
+        the fcfs policy, consumes ``waiting_queue`` order without re-sorting).
+        Recomputed each pass so a waiting request's boost reflects the current
+        clock.
+        """
+        waiting = self.waiting_queue
+        if len(waiting) < 2:
+            return
+        now = time.perf_counter()
+        waiting.sort(key=lambda req: self._boost_priority(req, now))
+
     def get_new_batch_prefill(self, running_batch):
         # Note: (maydomine) batch prefill admissions to amortize the fixed step
         # cost; the oldest-request deadline survives partial admission and aborts.
         #
         # 0.5.16 passes ``running_batch`` in and expects a ``NextBatchPlan`` back,
         # so the coalesce hold-off returns an empty plan rather than None.
+        if self.boost_enabled:
+            self._apply_boost_ordering()
         if self.prefill_coalesce_requests <= 1 or self.chunked_req is not None:
             return _Upstream.get_new_batch_prefill(self, running_batch)
         if not self.prefill_coalesce_when_idle and (
