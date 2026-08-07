@@ -58,7 +58,7 @@ def _spawn_client(out, stage_dir, per_client_rate, samples, offset, i):
         "--generate-only",
         "--use-existing-server",
         "--meta",
-        "zhaochenyang20/seed-tts-eval-arrow",
+        os.environ.get("BENCH_META", "zhaochenyang20/seed-tts-eval-arrow"),
         "--model",
         os.environ.get("BENCH_MODEL", "higgs"),
         "--host",
