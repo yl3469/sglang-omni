@@ -47,6 +47,10 @@ class HiggsTtsEngineBuilder(TtsEngineBuilder):
         boost_gamma_ada: bool = False,
         boost_gamma_min: float = 1.0,
         boost_gamma_max: float = 200.0,
+        boost_gamma_ada_interval_s: float = 5.0,
+        boost_gamma_ada_window: int = 2000,
+        boost_gamma_ada_min_samples: int = 200,
+        boost_gamma_ada_beta: float = 0.3,
         total_gpu_memory_fraction: float | None = None,
     ) -> None:
         if total_gpu_memory_fraction is not None and not (
@@ -71,6 +75,10 @@ class HiggsTtsEngineBuilder(TtsEngineBuilder):
         self.boost_gamma_ada = boost_gamma_ada
         self.boost_gamma_min = boost_gamma_min
         self.boost_gamma_max = boost_gamma_max
+        self.boost_gamma_ada_interval_s = boost_gamma_ada_interval_s
+        self.boost_gamma_ada_window = boost_gamma_ada_window
+        self.boost_gamma_ada_min_samples = boost_gamma_ada_min_samples
+        self.boost_gamma_ada_beta = boost_gamma_ada_beta
         self.total_gpu_memory_fraction = total_gpu_memory_fraction
         self.model: Any | None = None
 
@@ -174,6 +182,10 @@ class HiggsTtsEngineBuilder(TtsEngineBuilder):
             "boost_gamma_ada": self.boost_gamma_ada,
             "boost_gamma_min": self.boost_gamma_min,
             "boost_gamma_max": self.boost_gamma_max,
+            "boost_gamma_ada_interval_s": self.boost_gamma_ada_interval_s,
+            "boost_gamma_ada_window": self.boost_gamma_ada_window,
+            "boost_gamma_ada_min_samples": self.boost_gamma_ada_min_samples,
+            "boost_gamma_ada_beta": self.boost_gamma_ada_beta,
         }
 
     def post_scheduler_setup(self, scheduler: Any, model_runner: Any) -> None:
