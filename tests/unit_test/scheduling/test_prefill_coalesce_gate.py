@@ -46,6 +46,7 @@ class _StubScheduler:
         self.prefill_coalesce_requests = coalesce_requests
         self.prefill_coalesce_wait_s = wait_ms / 1e3
         self.prefill_coalesce_when_idle = coalesce_when_idle
+        self.boost_enabled = False
         self.chunked_req = None
         self.waiting_queue: list = []
         self.running_batch = SimpleNamespace(is_empty=lambda: False)
