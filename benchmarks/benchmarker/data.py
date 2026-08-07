@@ -25,3 +25,7 @@ class RequestResult:
     text_ttft_s: float | None = None
     audio_chunk_count: int = 0
     first_audio_payload_bytes: int = 0
+    # Wall-clock offsets (s) from the dispatch loop's t0, for steady-state
+    # windowing (drop ramp-up / drain when computing throughput).
+    send_t_s: float | None = None
+    done_t_s: float | None = None

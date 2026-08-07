@@ -86,13 +86,17 @@ class BenchmarkRunner:
             else None
         )
         pbar = tqdm(total=len(samples), disable=self.config.disable_tqdm)
+        base_t = time.perf_counter()
 
         async def _limited(sample: Any) -> RequestResult:
+            send_t = time.perf_counter() - base_t
             if semaphore:
                 async with semaphore:
                     result = await send_fn(session, sample)
             else:
                 result = await send_fn(session, sample)
+            result.send_t_s = send_t
+            result.done_t_s = time.perf_counter() - base_t
             pbar.update(1)
             return result
 

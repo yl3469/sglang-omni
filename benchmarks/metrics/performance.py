@@ -373,4 +373,10 @@ def _request_result_to_dict(output: RequestResult) -> dict:
         "inter_chunk_s": [round(d, 4) for d in inter] if inter else None,
         "audio_chunk_count": output.audio_chunk_count or None,
         "first_audio_payload_bytes": output.first_audio_payload_bytes or None,
+        "send_t_s": (
+            round(output.send_t_s, 4) if output.send_t_s is not None else None
+        ),
+        "done_t_s": (
+            round(output.done_t_s, 4) if output.done_t_s is not None else None
+        ),
     }
