@@ -1,6 +1,6 @@
 """Restage planner CLI for sglang-omni.
 
-    python -m sglang_omni.restage.plan --gpus 4 --context-tokens 6331 \
+    python -m sglang_omni.restage.plan --gpus 4 --context-tokens 6343 \
         --audio-seconds 4.5 [--model-path Qwen/Qwen3-Omni-30B-A3B-Instruct]
         [--launch-dir OUT] [--calibrate]
 
