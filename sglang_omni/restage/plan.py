@@ -24,9 +24,11 @@ Z99 = 2.326
 D_TS = (0.51, "MEASURED (invariant across 3 model configs, vllm stack)")
 D_MPS = (0.75, "PREDICTED band-midpoint 0.65-0.85; sgl-dm probe pending")
 
-# measured sglang anchors (4xH100, L=6331 campaign):
-SGL_TP2_AGG = (53.6, "MEASURED sglsolv5 line (TP2 + deadlock/pickle fixes)")
-SGL_DP2_AGG = (41.4, "MEASURED sglsolv5 line (DP x2 dedicated)")
+# measured sglang-omni anchors, per 2-GPU unit (2xH100, L=6343 unique-prefix
+# long context; sgl-3arm 19589494 arms A/B, sgl-solv5 19591990 arm C):
+SGL_DEFAULT_UNIT = (12.96, "MEASURED sgl-3arm 19589494 (shipped auto-partition)")
+SGL_NOTP_UNIT = (15.33, "MEASURED sgl-3arm 19589494 (hand-tuned 0.82/0.40, no TP; c8 rtf99 0.985)")
+SGL_TP2_UNIT = (9.97, "MEASURED sgl-solv5 19591990 (TP2 thinker, c4; compute-bound regime -> TP2 loses)")
 
 
 def kappa_lower(T, delta, D):
@@ -45,21 +47,29 @@ def candidates(gpus, wl, law):
     k1 = kappa_lower(T1, delta, wl.audio_seconds)
     rho = T1 / max(k1, 1.0)
     pred = "PREDICTED(law: %s)" % law.source
+    unit = min(k1, 1e9) * rho            # per 2-GPU unit (thinker + tails), from the law
+    # If the law is uncalibrated but the workload sits at the measured sglang
+    # anchor (L~6343, D~4.5), prefer scaling the MEASURED no-TP unit over a
+    # borrowed vllm shape -- the provenance string says which one was used.
+    if law.source.startswith("UNCALIBRATED") and \
+            abs(wl.context_tokens - 6343) / 6343.0 < 0.1 and abs(wl.audio_seconds - 4.5) / 4.5 < 0.1:
+        unit = SGL_NOTP_UNIT[0]
+        pred = "PREDICTED scaling of 2-GPU unit(%s)" % SGL_NOTP_UNIT[1]
 
     if gpus >= 4:
         # DP x2 dedicated pairs (thinker+tails per pair)
-        yield ("dp2_dedicated", 2 * min(k1, 1e9) * rho, pred,
+        yield ("dp2_dedicated", 2 * unit, pred,
                [("thinker", [0]), ("tails", [1]), ("thinker", [2]), ("tails", [3])])
         # DP x3 tails consolidated on the last GPU
         for mode, (d, prov) in (("timeslice", D_TS), ("mps", D_MPS)):
-            yield ("dp3_consolidated_" + mode, 3 * min(k1, 1e9) * rho * d,
+            yield ("dp3_consolidated_" + mode, 3 * unit * d,
                    "%s x d[%s]=%.2f (%s)" % (pred, mode, d, prov),
                    [("thinker", [0]), ("thinker", [1]), ("thinker", [2]),
                     ("tails x3 shared", [3])])
-        # TP2 thinker + tails (sglang's measured winner at L=6331)
-        yield ("tp2_thinker", SGL_TP2_AGG[0] * (T1 * 4.5 / wl.audio_seconds) / T1
-               if False else SGL_TP2_AGG[0],
-               SGL_TP2_AGG[1] + " -- anchor at L=6331 only; recalibrate for other L",
+        # TP2 thinker + tails: measured LOSER on the 2xH100 line (compute-bound);
+        # scaled by 2-GPU units for the 4-GPU shape (PREDICTED scaling).
+        yield ("tp2_thinker", SGL_TP2_UNIT[0] * (gpus // 2),
+               "PREDICTED %dx unit(%s) -- anchor at L=6343 only; recalibrate for other L" % (gpus // 2, SGL_TP2_UNIT[1]),
                [("thinker TP2", [0, 1]), ("tails", [2]), ("tails idle/replica", [3])])
 
 
