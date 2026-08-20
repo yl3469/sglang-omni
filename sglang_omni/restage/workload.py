@@ -50,9 +50,11 @@ VLLM_OMNI_QWEN3_LAW = ServiceLaw(
     source="laxis/laxis2/laxis512 (jobs 19844919/19861831/19879559)",
 )
 
-# sglang-omni: NOT yet fitted -- run the calibration probes. Placeholder uses
-# the vllm shape with prefill_rate scaled by the measured sglang TP2 advantage;
-# every number derived from it is marked PREDICTED by the planner.
+# sglang-omni: NOT yet fitted -- run the calibration probes. Placeholder reuses
+# the vllm-omni coefficients UNCHANGED (no sglang-specific scaling). Measured
+# sglang-omni facts so far (2xH100, L=6343): no-TP hand-tuned 15.33 > default
+# 12.96 > TP2 9.97 at QoS -- TP2 LOSES there (compute-bound). Every number
+# derived from this law is marked PREDICTED by the planner.
 SGLANG_OMNI_QWEN3_LAW = ServiceLaw(
     a=0.057, b=1.55e-6, c=2.7e-9,
     delta_floor_s=0.027, prefill_rate=36_000,

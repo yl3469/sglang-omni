@@ -5,15 +5,19 @@ GPU-sharing mode) from a handful of measured constants instead of grid search.
 
 Quick start:
     python -m sglang_omni.restage.plan --gpus 4 \
-        --context-tokens 6331 --audio-seconds 4.5
+        --context-tokens 6343 --audio-seconds 4.5
     python -m sglang_omni.restage.plan --gpus 4 --context-tokens 2048 \
         --calibrate   # prints the two probe commands for an unmeasured workload
 
-Core ideas (validated on 8 configurations across two engines, see the Restage
-paper draft): the SLO-limited concurrency kappa is the water level of
+Core ideas (kappa validated on 10 cells, all on vLLM-Omni -- Qwen3-Omni-30B on
+4xH100 and Qwen3-TTS-1.7B on 1xH100; the sglang-omni 2xH100 line has three
+measured arms, see the Restage paper draft): the SLO-limited concurrency kappa
+is the water level of
     c/T_sat + (c + 2.33*sqrt(c)) * delta / D = 1
 with T_sat from ONE saturation probe and delta (per-arrival prefill stall)
 from ONE single-request probe; co-location on a shared GPU multiplies utility
-by a sharing discount d(mode) -- time-slice d~=0.5 (invariant across models),
-MPS d = 0.64-0.81 (workload-dependent).
+by a sharing discount d(mode) -- measured on vLLM-Omni: time-slice d~=0.51
+(both verified models), MPS d = 0.64-0.81 (load-dependent). sglang-omni d(m)
+is not yet measured (sgl-dm probe pending; registered bands [0.40,0.62] /
+[0.65,0.85]) -- the planner marks those rows PRIOR.
 """

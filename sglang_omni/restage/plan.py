@@ -18,17 +18,18 @@ from .workload import Workload, SGLANG_OMNI_QWEN3_LAW
 
 Z99 = 2.326
 
-# sharing discounts: time-slice invariant across models/stacks measured so
-# far (0.51/0.51/0.52); MPS band from the vllm campaign; sglang d(m) probe
-# (job sgl-dm) upgrades these to MEASURED when its results are folded in.
-D_TS = (0.51, "MEASURED (invariant across 3 model configs, vllm stack)")
-D_MPS = (0.75, "PREDICTED band-midpoint 0.65-0.85; sgl-dm probe pending")
+# sharing discounts: NOT yet measured on sglang-omni (sgl-dm probe pending).
+# d(ts) is transferred from vLLM-Omni (0.51 on Qwen3-Omni dp3-19772286 and
+# Qwen3-TTS q3coloc-19862281); d(mps) is the midpoint of the pre-registered
+# sglang-omni band [0.65,0.85] (vLLM-Omni measured 0.64-0.81, load-dependent).
+D_TS = (0.51, "PRIOR for sglang-omni: vLLM-Omni measured d(ts)=0.51; registered band [0.40,0.62]; sgl-dm 20045878 pending")
+D_MPS = (0.75, "PRIOR for sglang-omni: midpoint of registered band [0.65,0.85]; vLLM-Omni measured 0.64-0.81; sgl-dm pending")
 
 # measured sglang-omni anchors, per 2-GPU unit (2xH100, L=6343 unique-prefix
 # long context; sgl-3arm 19589494 arms A/B, sgl-solv5 19591990 arm C):
-SGL_DEFAULT_UNIT = (12.96, "MEASURED sgl-3arm 19589494 (shipped auto-partition)")
-SGL_NOTP_UNIT = (15.33, "MEASURED sgl-3arm 19589494 (hand-tuned 0.82/0.40, no TP; c8 rtf99 0.985)")
-SGL_TP2_UNIT = (9.97, "MEASURED sgl-solv5 19591990 (TP2 thinker, c4; compute-bound regime -> TP2 loses)")
+SGL_DEFAULT_UNIT = (12.96, "MEASURED sglang-omni 2xH100 sgl-3arm 19589494 (shipped auto-partition, c4)")
+SGL_NOTP_UNIT = (15.33, "MEASURED sglang-omni 2xH100 sgl-3arm 19589494 (hand-tuned 0.82/0.40, no TP; c8 rtf99 0.985 -- single run, marginal)")
+SGL_TP2_UNIT = (9.97, "MEASURED sglang-omni 2xH100 sgl-solv5 19591990 (TP2 thinker @ fraction 0.62, c4; loses at QoS -- compute-bound)")
 
 
 def kappa_lower(T, delta, D):
@@ -68,9 +69,10 @@ def candidates(gpus, wl, law):
                     ("tails x3 shared", [3])])
         # TP2 thinker + tails: measured LOSER on the 2xH100 line (compute-bound);
         # scaled by 2-GPU units for the 4-GPU shape (PREDICTED scaling).
-        yield ("tp2_thinker", SGL_TP2_UNIT[0] * (gpus // 2),
-               "PREDICTED %dx unit(%s) -- anchor at L=6343 only; recalibrate for other L" % (gpus // 2, SGL_TP2_UNIT[1]),
-               [("thinker TP2", [0, 1]), ("tails", [2]), ("tails idle/replica", [3])])
+        # one TP2 replica needs 3 GPUs (thinker x2 + tails); on 4 GPUs the 4th idles.
+        yield ("tp2_thinker", SGL_TP2_UNIT[0],
+               "PREDICTED 1x unit(%s); 4th GPU idle -- anchor at L=6343 only; recalibrate for other L" % SGL_TP2_UNIT[1],
+               [("thinker TP2", [0, 1]), ("tails", [2]), ("idle", [3])])
 
 
 def launcher_lines(name, model_path, ports=(8040, 8041, 8042)):
@@ -96,10 +98,10 @@ def launcher_lines(name, model_path, ports=(8040, 8041, 8042)):
         return [env,
                 base + " --port 8040 --gpu-thinker 0 --gpu-talker 1 "
                        "--gpu-code-predictor 1 --gpu-code2wav 1 "
-                       "--thinker-mem-fraction-static 0.80 --talker-mem-fraction-static 0.40 &",
+                       "--thinker-mem-fraction-static 0.82 --talker-mem-fraction-static 0.40 &",
                 base + " --port 8041 --gpu-thinker 2 --gpu-talker 3 "
                        "--gpu-code-predictor 3 --gpu-code2wav 3 "
-                       "--thinker-mem-fraction-static 0.80 --talker-mem-fraction-static 0.40 &"]
+                       "--thinker-mem-fraction-static 0.82 --talker-mem-fraction-static 0.40 &"]
     if name == "tp2_thinker":
         return [env,
                 base + " --port 8040 --thinker-tp-size 2 --gpu-thinker-tp 0,1 "
@@ -133,13 +135,15 @@ def main():
     law = SGLANG_OMNI_QWEN3_LAW
     rows = sorted(candidates(args.gpus, wl, law), key=lambda r: -r[1])
 
+    print("Stack: sglang-omni (Qwen3-Omni-30B, H100) | measured anchors: 2xH100, L=6343 unique-prefix; 4-GPU rows are PREDICTED")
     print("Workload: L=%d tok, D=%.1f s, rtf_p99<=%.1f | law: %s"
           % (wl.context_tokens, wl.audio_seconds, wl.slo_rtf, law.source))
     print("%-26s %10s  %s" % ("plan", "audio-s/s", "provenance"))
     for name, agg, prov, _ in rows:
         print("%-26s %10.1f  %s" % (name, agg, prov))
     best = rows[0]
-    print("\nCHOSEN: %s (%.1f audio-s/s)" % (best[0], best[1]))
+    print("\nCHOSEN: %s (%.1f audio-s/s, sglang-omni, %s)" % (best[0], best[1], "PREDICTED" if ("PREDICTED" in best[2] or "PRIOR" in best[2]) else "MEASURED"))
+    print("  provenance: %s" % best[2])
 
     lines = launcher_lines(best[0], args.model_path)
     print("\nLaunch:")
