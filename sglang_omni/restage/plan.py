@@ -18,12 +18,15 @@ from .workload import Workload, SGLANG_OMNI_QWEN3_LAW
 
 Z99 = 2.326
 
-# sharing discounts: NOT yet measured on sglang-omni (sgl-dm probe pending).
-# d(ts) is transferred from vLLM-Omni (0.51 on Qwen3-Omni dp3-19772286 and
-# Qwen3-TTS q3coloc-19862281); d(mps) is the midpoint of the pre-registered
-# sglang-omni band [0.65,0.85] (vLLM-Omni measured 0.64-0.81, load-dependent).
-D_TS = (0.51, "PRIOR for sglang-omni: vLLM-Omni measured d(ts)=0.51; registered band [0.40,0.62]; sgl-dm 20045878 pending")
-D_MPS = (0.75, "PRIOR for sglang-omni: midpoint of registered band [0.65,0.85]; vLLM-Omni measured 0.64-0.81; sgl-dm pending")
+# sharing discounts MEASURED on sglang-omni (sgl-dm 20057386, h020, 4xH100,
+# L=6343, same-node 3 arms, matched per-pipeline c8): ded 17.03 audio-s/s
+# (rtf99 0.88) | time-slice x3 agg 29.4 -> 0.58 | MPS x3 agg 43.5 -> 0.85.
+# Both inside the pre-registered bands [0.40,0.62] / [0.65,0.85]; vLLM-Omni
+# measured 0.51 / 0.76-0.93. Caveat: consolidated pipelines exceed rtf99 1
+# at c8 (ts 1.46-1.65, mps 0.94-1.32) -- throughput-ratio d; the QoS-gated
+# consolidation win on sglang-omni is not established.
+D_TS = (0.58, "MEASURED sglang-omni sgl-dm 20057386 (h020, matched c8 ratio; consolidated rtf99>1 at c8)")
+D_MPS = (0.85, "MEASURED sglang-omni sgl-dm 20057386 (h020, matched c8 ratio; consolidated rtf99 0.94-1.32 at c8)")
 
 # measured sglang-omni anchors, per 2-GPU unit (2xH100, L=6343 unique-prefix
 # long context; sgl-3arm 19589494 arms A/B, sgl-solv5 19591990 arm C):

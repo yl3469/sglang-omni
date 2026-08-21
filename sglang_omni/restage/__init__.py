@@ -17,7 +17,7 @@ is the water level of
 with T_sat from ONE saturation probe and delta (per-arrival prefill stall)
 from ONE single-request probe; co-location on a shared GPU multiplies utility
 by a sharing discount d(mode) -- measured on vLLM-Omni: time-slice d~=0.51
-(both verified models), MPS d = 0.64-0.81 (load-dependent). sglang-omni d(m)
-is not yet measured (sgl-dm probe pending; registered bands [0.40,0.62] /
-[0.65,0.85]) -- the planner marks those rows PRIOR.
+(both verified models), MPS d = 0.64-0.81 (load-dependent); on sglang-omni
+(sgl-dm 20057386, matched c8) time-slice 0.58, MPS 0.85 -- both inside the
+pre-registered bands (throughput ratios; consolidated rtf99 > 1 at c8).
 """
