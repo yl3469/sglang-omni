@@ -15,6 +15,7 @@ import math
 import os
 
 from .workload import Workload, SGLANG_OMNI_QWEN3_LAW
+from . import models as MODELS
 
 Z99 = 2.326
 
@@ -78,6 +79,91 @@ def candidates(gpus, wl, law):
                [("thinker TP2", [0, 1]), ("tails", [2]), ("idle", [3])])
 
 
+def pool_requests(entry, wl, frac, gpu_mem_gib):
+    """How many L-token requests the KV pool holds at a memory fraction.
+
+    Returns None when the KV geometry is unpublished (PRIOR-only entry):
+    the pool cap then never binds in ranking and every number stays PRIOR.
+    """
+    if entry.kv_bytes_per_tok is None or entry.backbone_gib is None:
+        return None
+    pool_gib = frac * gpu_mem_gib - entry.backbone_gib
+    if pool_gib <= 0:
+        return 0.0
+    return pool_gib * (1 << 30) / (entry.kv_bytes_per_tok * wl.context_tokens)
+
+
+def candidates_for_model(entry, gpus, wl, law, gpu_mem_gib=80.0):
+    """Yield (name, agg_throughput, provenance, layout) for a registry entry.
+
+    qwen3-omni-30b keeps the measured-anchor path (candidates()); every other
+    entry ranks from the uncalibrated law + config-derived memory arithmetic,
+    so every throughput is PREDICTED/PRIOR until the two probes are run.
+    The d(m) values below are the qwen3-omni tails measurement reused as a
+    PRIOR band for other models -- the ranking prints that explicitly.
+    """
+    if entry.name == "qwen3-omni-30b":
+        for row in candidates(gpus, wl, law):
+            yield row
+        return
+
+    T1 = law.T_sat(wl.audio_seconds, wl.context_tokens)
+    delta = law.delta(wl.context_tokens)
+    k1 = kappa_lower(T1, delta, wl.audio_seconds)
+    pred = "PREDICTED(law: %s; constants: %s)" % (law.source, entry.provenance.split(";")[0])
+    d_prior = (("timeslice", D_TS[0], "PRIOR: qwen3-omni tails d(ts)=0.58 reused (cross-model band 0.41-0.58)"),
+               ("mps", D_MPS[0], "PRIOR: qwen3-omni tails d(mps)=0.85 reused (cross-model band 0.64-0.93)"))
+
+    if entry.backbone_gib is not None and entry.backbone_gib > gpu_mem_gib:
+        # arithmetic wall: one backbone does not fit one GPU -> TP mandatory
+        yield ("tp2_backbone_mandatory", T1, pred + " -- TP mandatory (weights %.1f GiB > %.0f GiB GPU)"
+               % (entry.backbone_gib, gpu_mem_gib), [("backbone TP2", [0, 1]), ("tails", [2])])
+        return
+
+    # per-engine footprint: weights + runtime margin + kappa L-token KV pool
+    kv_need_gib = (k1 * wl.context_tokens * entry.kv_bytes_per_tok / (1 << 30)
+                   if entry.kv_bytes_per_tok is not None else None)
+    total_w = ((entry.backbone_gib or 0.0) + (entry.tails_gib or 0.0)) or None
+    footprint = (total_w + 2.0 + (kv_need_gib or 0.0)) if total_w is not None else None
+
+    # dedicated: one engine (backbone+tails) per GPU (pair only if it can't fit)
+    per_engine_gpus = 2 if (footprint is not None and footprint > 0.9 * gpu_mem_gib) else 1
+    n_ded = gpus // per_engine_gpus
+    q = pool_requests(entry, wl, 0.85, gpu_mem_gib)
+    eff = min(k1, q) if q is not None else k1
+    unit = eff * (T1 / max(k1, 1.0))
+    cap_note = "" if q is None else " pool holds %.0f reqs @ L=%d (kappa %d %s)" % (
+        q, wl.context_tokens, k1, "binds" if k1 <= q else "> pool -> POOL BINDS")
+    yield ("dedicated_x%d" % n_ded, n_ded * unit, pred + cap_note,
+           [("engine", [i * per_engine_gpus]) for i in range(n_ded)])
+
+    # "small" = plausibly cannot saturate the GPU alone; the only MEASURED
+    # co-location gain is the vLLM-Omni TTS-1.7B line, so gate tightly.
+    small = footprint is not None and footprint <= 0.15 * gpu_mem_gib
+    if small:
+        # co-locate n engines on ONE GPU under a sharing mode; n from the full
+        # per-engine footprint (weights + margin + kappa-sized KV pool).
+        # UPPER BOUND: co-location only gains when a single engine cannot
+        # saturate the GPU (MEASURED only on vLLM-Omni TTS x2/x3: 26.1 -> 41.7);
+        # for a compute-saturated engine the true d approaches 1/n.
+        n_fit = max(1, int((gpu_mem_gib * 0.9) // footprint))
+        for n in sorted({2, 3, min(n_fit, 4)}):
+            if n > n_fit or n < 2:
+                continue
+            for mode, d, dprov in d_prior:
+                yield ("coloc%d_%s_per_gpu" % (n, mode), gpus * n * unit * d,
+                       "%s x %d/GPU x d[%s]=%.2f UPPER BOUND (%s; true d -> 1/n if one engine already saturates)"
+                       % (pred, n, mode, d, dprov),
+                       [("%d engines shared" % n, [g]) for g in range(gpus)])
+    elif total_w is not None:
+        # backbone per GPU, tails consolidated on the last GPU
+        n_bb = gpus - 1
+        for mode, d, dprov in d_prior:
+            yield ("dp%d_consolidated_%s" % (n_bb, mode), n_bb * unit * d,
+                   "%s x d[%s]=%.2f (%s)" % (pred, mode, d, dprov),
+                   [("backbone", [i]) for i in range(n_bb)] + [("tails x%d shared" % n_bb, [gpus - 1])])
+
+
 def launcher_lines(name, model_path, ports=(8040, 8041, 8042)):
     base = ("python examples/run_qwen3_omni_speech_server.py "
             "--model-path %s" % model_path)
@@ -125,20 +211,40 @@ CALIBRATION = """# Calibration probes for this workload (turn PREDICTED into MEA
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--model", default="qwen3-omni-30b",
+                    help="registry key (see --list-models)")
+    ap.add_argument("--list-models", action="store_true")
     ap.add_argument("--gpus", type=int, default=4)
-    ap.add_argument("--context-tokens", type=int, required=True)
-    ap.add_argument("--audio-seconds", type=float, default=4.5)
+    ap.add_argument("--gpu-mem-gib", type=float, default=80.0)
+    ap.add_argument("--context-tokens", type=int, default=None)
+    ap.add_argument("--audio-seconds", type=float, default=None)
     ap.add_argument("--slo-rtf", type=float, default=1.0)
-    ap.add_argument("--model-path", default="Qwen/Qwen3-Omni-30B-A3B-Instruct")
+    ap.add_argument("--model-path", default=None)
     ap.add_argument("--launch-dir", default=None)
     ap.add_argument("--calibrate", action="store_true")
     args = ap.parse_args()
 
-    wl = Workload(args.context_tokens, args.audio_seconds, args.slo_rtf)
-    law = SGLANG_OMNI_QWEN3_LAW
-    rows = sorted(candidates(args.gpus, wl, law), key=lambda r: -r[1])
+    if args.list_models:
+        for name, e in MODELS.REGISTRY.items():
+            tag = "servable" if e.servable else "planner-only"
+            anch = "MEASURED anchors" if e.anchors else "no measurement"
+            print("%-18s %-12s %-17s %s" % (name, tag, anch, e.hf_id))
+        return
 
-    print("Stack: sglang-omni (Qwen3-Omni-30B, H100) | measured anchors: 2xH100, L=6343 unique-prefix; 4-GPU rows are PREDICTED")
+    entry = MODELS.get(args.model)
+    wl = Workload(
+        args.context_tokens if args.context_tokens is not None else entry.default_workload.context_tokens,
+        args.audio_seconds if args.audio_seconds is not None else entry.default_workload.audio_seconds,
+        args.slo_rtf, name=entry.default_workload.name)
+    model_path = args.model_path or entry.hf_id
+    law = SGLANG_OMNI_QWEN3_LAW
+    rows = sorted(candidates_for_model(entry, args.gpus, wl, law, args.gpu_mem_gib),
+                  key=lambda r: -r[1])
+
+    print("Stack: sglang-omni | model: %s (%s, %s)"
+          % (entry.name, entry.hf_id, "servable" if entry.servable
+             else "PLANNER-ONLY: no sglang-omni implementation yet"))
+    print("Constants: %s" % entry.provenance)
     print("Workload: L=%d tok, D=%.1f s, rtf_p99<=%.1f | law: %s"
           % (wl.context_tokens, wl.audio_seconds, wl.slo_rtf, law.source))
     print("%-26s %10s  %s" % ("plan", "audio-s/s", "provenance"))
@@ -148,11 +254,18 @@ def main():
     print("\nCHOSEN: %s (%.1f audio-s/s, sglang-omni, %s)" % (best[0], best[1], "PREDICTED" if ("PREDICTED" in best[2] or "PRIOR" in best[2]) else "MEASURED"))
     print("  provenance: %s" % best[2])
 
-    lines = launcher_lines(best[0], args.model_path)
-    print("\nLaunch:")
-    for ln in lines:
-        print("  " + ln)
-    if args.launch_dir:
+    if not entry.servable:
+        print("\nNo launch emitted: %s has no sglang-omni implementation. The plan"
+              "\nabove is the residency shape to target when porting it; after the"
+              "\nport, run the two calibration probes before trusting any ranking."
+              % entry.name)
+        lines = []
+    else:
+        lines = launcher_lines(best[0], model_path)
+        print("\nLaunch:")
+        for ln in lines:
+            print("  " + ln)
+    if lines and args.launch_dir:
         os.makedirs(args.launch_dir, exist_ok=True)
         path = os.path.join(args.launch_dir, "launch_%s.sh" % best[0])
         with open(path, "w") as f:
