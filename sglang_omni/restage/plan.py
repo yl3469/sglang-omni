@@ -61,6 +61,17 @@ def candidates(gpus, wl, law):
         unit = SGL_NOTP_UNIT[0]
         pred = "PREDICTED scaling of 2-GPU unit(%s)" % SGL_NOTP_UNIT[1]
 
+    if gpus == 2:
+        # the directly measured 2xH100 arms; numbers are the measured units at
+        # the anchor workload (L~6343, D~4.5) -- off-anchor, recalibrate first
+        yield ("rebalanced_notp", SGL_NOTP_UNIT[0], SGL_NOTP_UNIT[1],
+               [("thinker", [0]), ("tails", [1])])
+        yield ("shipped_auto", SGL_DEFAULT_UNIT[0], SGL_DEFAULT_UNIT[1],
+               [("thinker", [0]), ("tails", [1])])
+        yield ("tp2_thinker", SGL_TP2_UNIT[0], SGL_TP2_UNIT[1],
+               [("thinker TP2", [0, 1]), ("tails", [1])])
+        return
+
     if gpus >= 4:
         # DP x2 dedicated pairs (thinker+tails per pair)
         yield ("dp2_dedicated", 2 * unit, pred,

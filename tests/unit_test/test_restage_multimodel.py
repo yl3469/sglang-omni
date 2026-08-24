@@ -128,3 +128,11 @@ def test_launcher_only_for_qwen3_omni_shapes():
 def test_mps_launcher_uses_node_local_pipe_dir():
     lines = "\n".join(launcher_lines("dp3_consolidated_mps", "m"))
     assert "CUDA_MPS_PIPE_DIRECTORY=/tmp" in lines  # never Lustre/FSx
+
+
+def test_two_gpu_measured_line_ranks_and_wins():
+    # gpus=2 is the hardware the anchors were measured on; must not crash and
+    # must reproduce the A/B verdict order: no-TP 15.33 > shipped 12.96 > TP2
+    rows = ranked("qwen3-omni-30b", gpus=2, wl=Workload(6343, 4.5))
+    assert [r[0] for r in rows] == ["rebalanced_notp", "shipped_auto", "tp2_thinker"]
+    assert rows[0][1] == SGL_NOTP_UNIT[0] and "MEASURED" in rows[0][2]
