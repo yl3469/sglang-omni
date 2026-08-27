@@ -326,7 +326,13 @@ def create_talker_executor(
     talker_model_path: str | None = None,
     device: str = "cuda",
     voice: str = "DB30",
+    gpu_id: int | None = None,
 ):
+    # replica support (processes.replica_devices): each replica receives its
+    # device via gpu_id; the worker has already called set_device(gpu_id),
+    # so a plain "cuda" device string binds to the right card.
+    if gpu_id is not None and device == "cuda":
+        device = f"cuda:{gpu_id}"
     from sglang_omni.models.ming_omni.components.talker_executor import (
         MingTalkerExecutor,
     )

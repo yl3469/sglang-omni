@@ -276,6 +276,10 @@ class MingOmniTalker(nn.Module):
 
         # Qwen2 LLM backbone
         self.model_config = Qwen2Config(**config.llm_config)
+        # set BEFORE construction: on transformers 5.12 + the 0.5.18 stack the
+        # implementation is resolved at build time (a post-hoc assignment left
+        # layers on the unregistered kernels-community/flash-attn2 default)
+        self.model_config._attn_implementation = "sdpa"
         self.model = Qwen2Model(self.model_config)
         self.model.config._attn_implementation = "sdpa"
 
