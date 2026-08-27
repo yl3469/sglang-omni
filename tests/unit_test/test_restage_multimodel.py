@@ -44,7 +44,11 @@ def test_planner_beats_shipped_default_on_measured_anchor():
 
 
 def test_tp2_ranks_last_at_the_anchor():
-    rows = ranked("qwen3-omni-30b", wl=Workload(6343, 4.5))
+    # pinned on the pure-MEASURED 2-GPU line: at 4 GPUs the other arms are
+    # law-derived, and after the Blackwell recalibration (calib2-20260825)
+    # the law's serial-proxy units may not dominate the H100-measured TP2
+    # number -- that cross-hardware comparison is not the invariant here.
+    rows = ranked("qwen3-omni-30b", gpus=2, wl=Workload(6343, 4.5))
     assert rows[-1][0] == "tp2_thinker", [r[0] for r in rows]
     assert SGL_TP2_UNIT[0] < SGL_DEFAULT_UNIT[0]  # TP2 loses even to shipped
 

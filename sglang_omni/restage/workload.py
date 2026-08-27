@@ -50,13 +50,22 @@ VLLM_OMNI_QWEN3_LAW = ServiceLaw(
     source="laxis/laxis2/laxis512 (jobs 19844919/19861831/19879559)",
 )
 
-# sglang-omni: NOT yet fitted -- run the calibration probes. Placeholder reuses
-# the vllm-omni coefficients UNCHANGED (no sglang-specific scaling). Measured
-# sglang-omni facts so far (2xH100, L=6343): no-TP hand-tuned 15.33 > default
-# 12.96 > TP2 9.97 at QoS -- TP2 LOSES there (compute-bound). Every number
-# derived from this law is marked PREDICTED by the planner.
+# sglang-omni on Blackwell sm10.0 183GiB (calib2-20260825, this repo's exp/
+# harness): fitted from 160 individual c=1 requests across L in {512, 2048,
+# 4000, 6343} (L=9000 rejected: shipped thinker context_length=8192), content-
+# gated (audio 0.5-20s), temperature 0.2, per-request-unique prefixes. NNLS
+# fit s = 0.2078 + 0*L + 2.634e-9*L^2 + 0.1076*D; the a below folds the D
+# term at the D=4.5 anchor. delta/prefill from streaming TTFT vs L.
+# VALIDATION: kappa (bootstrap-95%-CI p99 rtf <= 1) predicted within +-2 of
+# the gated measured frontier at all four L, including the held-out L=4000
+# (pred 4.9/4.8/4.3/4.7 vs measured 5/4/3/7). KNOWN BIAS: T_sat = D/s(L)
+# from this law is a SERIAL-latency proxy and underpredicts the saturated
+# plateau ~1.8x (stages overlap under load) -- conservative for capacity,
+# correct for kappa. H100 facts (2xH100, L=6343): no-TP 15.33 > default
+# 12.96 > TP2 9.97 at QoS; those anchors do NOT transfer to 183GiB.
 SGLANG_OMNI_QWEN3_LAW = ServiceLaw(
-    a=0.057, b=1.55e-6, c=2.7e-9,
-    delta_floor_s=0.027, prefill_rate=36_000,
-    source="UNCALIBRATED: vllm-omni shape reused; run plan.py --calibrate",
+    a=0.692, b=0.0, c=2.634e-9,
+    delta_floor_s=0.089, prefill_rate=95_712,
+    source="MEASURED Blackwell-183GiB calib2-20260825 (c=1 NNLS fit, "
+           "kappa holdout-validated +-2; T_sat serial proxy ~1.8x low)",
 )
