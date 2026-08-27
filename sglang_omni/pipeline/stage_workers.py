@@ -588,7 +588,15 @@ def _construct_stage(
 ) -> Stage:
     gpu_id = spec.gpu_id
     if gpu_id is not None:
-        current_platform.set_device(int(gpu_id))
+        try:
+            current_platform.set_device(int(gpu_id))
+        except NotImplementedError:
+            # platform detection can fall back to the base mixin's [Planned]
+            # stub (observed under the CUDA MPS control daemon); torch's own
+            # setter is always available on CUDA builds.
+            import torch
+
+            torch.cuda.set_device(int(gpu_id))
         log.info("Set current device to %s for stage %s", gpu_id, spec.stage_name)
 
     # --- Build scheduler via factory ---

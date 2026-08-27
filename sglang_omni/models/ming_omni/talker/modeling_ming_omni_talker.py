@@ -542,7 +542,10 @@ class MingOmniTalker(nn.Module):
                         output_hidden_states=True,
                     )
                 else:
-                    past_seen_tokens = past_key_values.get_seq_length()
+                    # transformers 5.12 returns a 0-d Tensor here; torch.arange
+                    # requires Numbers, so coerce (and .item() keeps CUDA graphs
+                    # off the sync path only at capture time).
+                    past_seen_tokens = int(past_key_values.get_seq_length())
                     cache_position = torch.arange(
                         past_seen_tokens,
                         past_seen_tokens + inputs_embeds.shape[1],
@@ -998,7 +1001,12 @@ class MingOmniTalker(nn.Module):
         speech_parts = []
         spk_emb_list = []
         for x in prompt_wav_path:
-            speech_tmp, sample_rate = torchaudio.load(x, backend="soundfile")
+            # torchaudio 2.11 ignores backend= and requires torchcodec (needs
+            # system FFmpeg shared libs); decode with soundfile directly.
+            import soundfile as _sf
+
+            _data, sample_rate = _sf.read(x, dtype="float32", always_2d=True)
+            speech_tmp = torch.from_numpy(_data.T)
             speech_tmp1 = speech_tmp.clone()
             if sample_rate != audio_detokenizer.config.sample_rate:
                 speech_tmp = torchaudio.transforms.Resample(
