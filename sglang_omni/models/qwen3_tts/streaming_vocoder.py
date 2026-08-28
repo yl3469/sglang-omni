@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import queue
 import threading
 import time
@@ -455,6 +456,13 @@ class Qwen3TTSStreamingVocoderScheduler(
         else:
             self._decode_stream = None
             self._followup_decode_stream = None
+        # VoxServe-style criticality gate: while first-chunk (TTFA-critical)
+        # decodes are queued, follow-up decodes whose playback buffer still has
+        # more than this many seconds of slack yield the GPU. 0 disables.
+        self._criticality_slack_s = float(
+            os.environ.get("SGLANG_OMNI_VOX_GATE_SLACK_S", "0") or 0.0
+        )
+        self._criticality_yield_s = 0.002
         self._initial_queue: queue.Queue[tuple[str, _Qwen3TTSStreamState] | None] = (
             queue.Queue()
         )
@@ -1260,12 +1268,35 @@ class Qwen3TTSStreamingVocoderScheduler(
                 return
             self._run_followup_batch(batch)
 
+    def _get_followup_gated(
+        self,
+    ) -> tuple[str, _Qwen3TTSStreamState] | None:
+        """Pop the earliest-deadline follow-up, deferring non-pressing work
+        while TTFA-critical initial decodes are queued (VoxServe policy)."""
+        deadline_s, _, request_id, state = self._followup_queue.get()
+        if state is None or self._async_stop.is_set():
+            return None
+        while (
+            self._criticality_slack_s > 0
+            and deadline_s - time.monotonic() > self._criticality_slack_s
+            and not self._initial_queue.empty()
+        ):
+            self._followup_queue.put(
+                (deadline_s, next(self._followup_sequence), request_id, state)
+            )
+            time.sleep(self._criticality_yield_s)
+            deadline_s, _, request_id, state = self._followup_queue.get()
+            if state is None or self._async_stop.is_set():
+                return None
+        return request_id, state
+
     def _collect_followup_batch(
         self,
     ) -> list[tuple[str, _Qwen3TTSStreamState]] | None:
-        _, _, request_id, state = self._followup_queue.get()
-        if state is None or self._async_stop.is_set():
+        head = self._get_followup_gated()
+        if head is None:
             return None
+        request_id, state = head
         batch = [(request_id, state)]
         deadline = time.monotonic() + self._followup_batch_wait_s
         while len(batch) < self._followup_max_batch_size:

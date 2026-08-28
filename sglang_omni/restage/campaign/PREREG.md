@@ -344,3 +344,59 @@ Incidental hop answer: router-fronted agg24 (85.6-89.1) ~= direct
 non-streaming (88.6) -> the Python router imposes no throughput ceiling at
 these rates. Router choice guidance: any policy; revisit only for
 heterogeneous fleets or per-worker stragglers.
+
+## VoxServe criticality-gate port (pre-registered, user-directed, 2026-08-28)
+
+User: "Can you adapt it to engine?" — port VoxServe's chunk-criticality
+scheduling into the sglang-omni engine loop. Code map result: for Qwen3-TTS
+the follow-up vocoder queue is ALREADY EDF (PriorityQueue on
+playback_deadline_s); the only missing VoxServe mechanism is the
+criticality GATE — non-pressing follow-up work (buffer slack > 1.0 s)
+should yield the GPU while TTFA-critical initial decodes are queued.
+Implementation: models/qwen3_tts/streaming_vocoder.py, flag
+SGLANG_OMNI_VOX_GATE_SLACK_S (0=off); _get_followup_gated() re-enqueues
+non-pressing head + 2 ms yield while _initial_queue is non-empty.
+Engine (AR) stage needs nothing: new requests are all "pressing" by
+VoxServe's own predicate (no chunk emitted), so FCFS admission is already
+pressing-first. Qwen3-Omni code2wav already privileges first-chunk work
+(select_step_participants) — out of scope here.
+
+Setup: Qwen3-TTS-1.7B-Base, 1 GPU (single engine+vocoder coloc, the
+short-ctx vocoder-binding regime), streaming, OPEN LOOP (--max-concurrency
+0) Poisson at qps 6/8/10/12 (capacity ~30 audio-s/s ~= qps 8; 10 and 12
+are overload), n = 30*rate, content gate + temp 0.2. Arms: OFF (flag
+unset) vs ON (slack=1.0 s), fresh server per arm, same GPU.
+
+Predictions:
+  P1 at qps >= 10 (overload): TTFA p99 ON <= 0.7x OFF (gate frees the
+     vocoder for first chunks that queue behind follow-up bursts).
+  P2 viability (all-chunk %) ON within 5 points of OFF at every rate
+     (gate defers only >1.0 s-slack work, by construction).
+  P3 delivered audio-s/s within +-10% at every rate (work conserving).
+Falsifier: if TTFA p99 delta < 10% at all rates, the dual CUDA-stream
+split already isolates initial decodes and the gate is a no-op on this
+hardware -> report as such, do not tune the slack post hoc.
+
+# VERDICT VoxServe criticality gate (voxgate_*, 2026-08-28)
+
+Cells: off/on x qps {6,8,10,12}, 1 GPU, open loop, 0 errors / 2160.
+P1 PARTIAL: qps12 (deep overload) TTFA p99 3.93 -> 1.71 s (0.44x, beats
+  the 0.7x bar; p90 3.46 -> 1.36); qps10 (near-saturation) REGRESSES
+  0.71 -> 1.24 s -- the 2 ms deferral yields cost latency when no initial
+  decode is actually starving. Gate helps only past the collapse point.
+P2 PASS: viability within 5 pts everywhere; qps12 IMPROVES +5 pts
+  (87.8 -> 92.8% all-chunk).
+P3 PASS at 10/12 (-0.4%/-1.2% audio-s/s); marginal miss at qps8 (-12%,
+  low-rate cells noisy; completed_qps moved the other way, 6.0 -> 7.9).
+UNREGISTERED FINDING: goodput@SLO1.0s DROPS at qps12 (7.36 -> 6.28 qps).
+  OFF is bimodal (fast majority + starved 3.5-4 s minority); the gate
+  flattens the distribution (p50 0.42 -> 0.70 s), pushing more requests
+  just past a tight SLO while rescuing the tail. EDF-vs-FIFO trade in
+  miniature: gate = better p99 + viability, worse median + strict-SLO
+  goodput. Guidance: enable the gate for tail-SLO deployments (p99
+  contracts), keep it off when the SLO is a tight median-side cutoff;
+  an adaptive gate (trigger on measured initial-queue wait, not queue
+  non-emptiness) is the obvious fix for the qps10 regression -- NOT
+  implemented, would need a fresh pre-registration.
+Baseline note: qps6 cells in both arms carry warmup contamination
+  (first post-warm cell; p99 ~5.5 s both arms) -- excluded from grading.

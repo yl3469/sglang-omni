@@ -361,3 +361,11 @@ qwen3-omni,router_policy_ablation,polabl_random_agg16,480,0,0,0,16.0,59.052,16.0
 qwen3-omni,router_policy_ablation,polabl_random_agg24,720,0,0,0,24.0,89.051,23.718,0.4811,1.4561,0.76,3.755
 qwen3-omni,router_policy_ablation,polabl_round_robin_agg16,480,0,0,0,16.0,60.352,16.132,0.4012,1.267,0.6233,3.741
 qwen3-omni,router_policy_ablation,polabl_round_robin_agg24,720,0,0,0,24.0,85.602,22.781,0.4892,1.5257,0.859,3.758
+qwen3-tts-1.7b,voxgate,off_qps10,300,0,,0,10,44.791,9.589,0.6494,5.797,0.7097,4.671
+qwen3-tts-1.7b,voxgate,off_qps12,360,0,,0,12,45.838,10.034,1.7942,6.98,3.9286,4.568
+qwen3-tts-1.7b,voxgate,off_qps6,180,0,,0,6,24.289,5.616,1.9224,8.995,5.6555,4.325
+qwen3-tts-1.7b,voxgate,off_qps8,240,0,,0,8,40.185,6.019,0.4636,21.562,0.8359,6.676
+qwen3-tts-1.7b,voxgate,on_qps10,300,0,,0,10,44.594,9.668,0.8886,5.122,1.2398,4.613
+qwen3-tts-1.7b,voxgate,on_qps12,360,0,,0,12,45.265,9.868,1.1746,6.994,1.7431,4.587
+qwen3-tts-1.7b,voxgate,on_qps6,180,0,,0,6,21.988,4.287,1.9352,11.604,5.378,5.129
+qwen3-tts-1.7b,voxgate,on_qps8,240,0,,0,8,35.281,7.896,0.7959,4.593,0.9241,4.468

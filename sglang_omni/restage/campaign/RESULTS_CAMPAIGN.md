@@ -390,3 +390,35 @@ the plan wins 1.7-3.3x with clean tails at loads where the default
 collapses. Where the default already saturates the hardware (Higgs), the
 enumerator correctly returns it unchanged — a planner that knows when to do
 nothing. 0 errors across all 4,240 matrix requests.
+
+## 13. VoxServe criticality gate, ported into the vocoder loop (voxgate)
+
+User question: can VoxServe's chunk-criticality policy be adapted to the
+sglang-omni engine? Code answer: mostly it already is — the engine stage
+needs nothing (new requests are all "pressing" by VoxServe's predicate),
+and the Qwen3-TTS follow-up vocoder queue is already EDF on
+playback_deadline_s. The one missing mechanism is the criticality GATE:
+follow-up decodes with >1 s of buffered-audio slack should yield the GPU
+while TTFA-critical initial decodes are queued. Implemented flag-gated in
+models/qwen3_tts/streaming_vocoder.py (SGLANG_OMNI_VOX_GATE_SLACK_S, 0=off,
+VoxServe value 1.0).
+
+A/B (pre-registered; Qwen3-TTS-1.7B, 1 GPU, streaming, open loop,
+qps 6/8/10/12, n=30x rate, cells voxgate/{off,on}_qps*):
+
+  qps12 (deep overload): TTFA p99 3.93 -> 1.71 s (2.3x), p90 3.46 -> 1.36,
+    viability +5 pts (87.8 -> 92.8%), throughput -1.2%.
+  qps10 (near saturation): REGRESSION, TTFA p99 0.71 -> 1.24 s — the gate's
+    deferral costs latency when nothing is starving.
+  Unregistered finding: goodput@SLO 1.0 s DROPS at qps12 (7.36 -> 6.28)
+    because OFF is bimodal (fast majority + starved 3.5-4 s minority) while
+    the gate shifts the median up (0.42 -> 0.70 s) to rescue the tail.
+
+Takeaway: the VoxServe policy transfers with one ~20-line hook, but it is a
+tail-vs-median trade, not a free win: enable for p99-SLO deployments, keep
+off for tight median-side SLOs. The principled fix for the qps10 regression
+is an adaptive trigger (gate on measured initial-queue wait, not mere queue
+non-emptiness) — left unimplemented pending a fresh pre-registration. Note
+the restage angle: the plan-level fix (a vocoder replica at the binding
+stage) removed the same tail without the median cost; scheduling-level and
+placement-level remedies are complements, not substitutes.
