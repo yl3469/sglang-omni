@@ -355,3 +355,9 @@ ming-flash-omni-2.0,b8_program,mdef_lad_c8,60,0,0,8,inf,14.091,3.466,1.0828,2.58
 ming-flash-omni-2.0,b8_program,mdef_qps2,60,0,0,0,2.0,7.416,1.851,0.4103,1.3623,,4.007
 ming-flash-omni-2.0,b8_program,mdef_qps4,60,0,0,0,4.0,12.138,3.006,0.5753,2.0934,,4.038
 ming-flash-omni-2.0,b8_program,mdef_qps6,60,0,0,0,6.0,14.61,3.642,3.4398,7.9868,,4.012
+qwen3-omni,router_policy_ablation,polabl_least_request_agg16,480,0,0,0,16.0,60.238,16.348,0.511,1.2553,0.6265,3.685
+qwen3-omni,router_policy_ablation,polabl_least_request_agg24,720,0,0,0,24.0,88.111,23.382,0.547,1.4885,0.7732,3.768
+qwen3-omni,router_policy_ablation,polabl_random_agg16,480,0,0,0,16.0,59.052,16.061,0.4632,1.2038,0.6364,3.677
+qwen3-omni,router_policy_ablation,polabl_random_agg24,720,0,0,0,24.0,89.051,23.718,0.4811,1.4561,0.76,3.755
+qwen3-omni,router_policy_ablation,polabl_round_robin_agg16,480,0,0,0,16.0,60.352,16.132,0.4012,1.267,0.6233,3.741
+qwen3-omni,router_policy_ablation,polabl_round_robin_agg24,720,0,0,0,24.0,85.602,22.781,0.4892,1.5257,0.859,3.758

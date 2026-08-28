@@ -320,3 +320,27 @@ stages on GPU0; possibly the yaml fraction does not reach the TP thinker in
 the streaming config path). LANDMINE recorded; per final-deliverable spec
 the Ming grid rows use non-streaming latency/rtf (mdef vs E1), TTFA = N/A.
 Higgs: hdef/hcol streaming cells (earlier) complete.
+
+## Router POLICY ablation (pre-registered, user-directed)
+
+Same live fleet (Qwen pipeline x8, streaming, gated), one router per policy
+in {least_request, round_robin, random}, cells at agg 16 and 24 (>=30 s).
+Predictions: with 8 homogeneous workers and Poisson arrivals, round_robin
+~= least_request on throughput (<3% delta); least_request wins the TTFA
+tail modestly at agg 24 (fewer transient pile-ups); random shows the worst
+tail (occasional double-hits). If random ~= least_request everywhere, policy
+is irrelevant at this scale. Note: sglang_omni_router is PYTHON (no Rust
+sgl-router in this stack); single-process router throughput ceiling is part
+of what this ablation bounds.
+
+# VERDICT router policy ablation (polabl_*, 2026-08-28)
+
+least_request / round_robin / random at agg 16 & 24 (same live fleet,
+streaming, 0 errors / 3600): throughput 59.1-60.4 @16 and 85.6-89.1 @24
+(+-2%, inside the <3% prediction); TTFA p99 0.62-0.64 @16, 0.76-0.86 @24.
+"random worst tail" FAILED (random tied best) -> pre-registered branch
+taken: policy is IRRELEVANT for 8 homogeneous workers under Poisson load.
+Incidental hop answer: router-fronted agg24 (85.6-89.1) ~= direct
+non-streaming (88.6) -> the Python router imposes no throughput ceiling at
+these rates. Router choice guidance: any policy; revisit only for
+heterogeneous fleets or per-worker stragglers.
