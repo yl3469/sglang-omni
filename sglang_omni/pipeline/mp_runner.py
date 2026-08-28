@@ -414,16 +414,16 @@ class _NcclPortAllocator:
         self._next = base_port
 
     def allocate(self) -> int:
-        """Return an available port, incrementing the counter."""
-        while True:
-            port = self._next
-            self._next += 1
-            try:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.bind(("127.0.0.1", port))
-                    return port
-            except OSError:
-                continue
+        """Return an available port.
+
+        Ephemeral allocation instead of a deterministic 29500+ counter: the
+        counter is a TOCTOU across co-hosted pipelines — two servers booting
+        on one node both probe 29500 free (the other's stage binds later)
+        and collide. Ephemeral ports make cross-server collisions vanish.
+        """
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            return s.getsockname()[1]
 
 
 class MultiProcessPipelineRunner:

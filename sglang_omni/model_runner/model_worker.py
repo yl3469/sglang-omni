@@ -487,9 +487,11 @@ class ModelWorker:
 
 
 def _resolve_nccl_port() -> int:
-    master_port = os.environ.get("MASTER_PORT")
-    if master_port:
-        return int(master_port)
+    # Do NOT reuse MASTER_PORT here: it is the thinker TP group's torch
+    # env:// port (set per server when co-hosting multiple pipelines on one
+    # node); reusing it for other stages collides with the thinker. Stages
+    # always pick an ephemeral port.
+    master_port = None
 
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -502,7 +504,6 @@ def _resolve_nccl_port() -> int:
         # callers still receive a valid NCCL port choice.
         port = 29500
 
-    os.environ["MASTER_PORT"] = str(port)
     return port
 
 
