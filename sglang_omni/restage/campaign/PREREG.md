@@ -275,3 +275,48 @@ to serve, the Ming TTFA cells are annotated as unavailable rather than
 substituted. Expectations: streaming adds TTFA visibility without changing
 throughput ranking; Qwen plan TTFA << default TTFA at matched load
 (prefill-behind-decode queueing, cf. section 6).
+
+## Grid methodology fix (before final grid runs)
+
+Short open-loop cells (n=160 at 24 req/s = 6.7 s of arrivals) understate
+throughput: drain dominates wall-clock (rtf tails were clean while
+completed qps plateaued). RULE: open-loop cells get >= 30 s of arrivals
+(n = rate x 30). Prior high-rate streaming cells (e2s_r_agg16/24, e3s
+agg24) are deprecated for the grid and rerun. Ming streaming OOM'd under
+auto-sizing (extra streaming stages) -> explicit thinker fractions. All
+four arms now router-fronted (e3s rerun through router for symmetry).
+
+## FINAL-DELIVERABLE SPEC (user, 2026-08-28)
+
+1. APPLES-TO-APPLES BASELINE at B=8: the by-the-book default taking as many
+   of the 8 GPUs as it can — Qwen 4x shipped split (8/8), Ming cookbook
+   TP4+talker (5/8, idle stated: the default config cannot fill 8 without
+   replication, which is a plan-side move), Higgs 8x 1-engine (8/8).
+2. VoxServe metrics, ALL of them, per model at ONE workload across LOADS:
+   rows = TTFA p99, latency p99, rtf p99 (+ goodput/viability in the summary
+   panel); columns = models; each panel baseline-vs-ours vs offered load.
+3. Figures must show RELATIVE IMPROVEMENT annotations (ours/baseline at the
+   highest common load) and a takeaway strip.
+4. Serving-path consistency: within each model both arms use the same path
+   (Qwen arms both router-fronted; Higgs arms both direct-fleet; Ming
+   default is single-worker DIRECT vs plan router-fronted — the router hop
+   is quantified separately, see 5, which licenses this asymmetry).
+5. ROUTER ABLATION DEFERRED (pre-registered stub): same arm, same streaming
+   mode, direct client-split vs router-fronted (e.g., Qwen pipeline x8 at
+   agg 16/24). Prediction: router hop adds <5% TTFA p50 and <2% throughput
+   delta. To run after the main grid.
+
+# VERDICT streaming grid (final, 2026-08-28)
+
+Qwen (both arms router-fronted, streaming, gated, >=30s cells):
+- default 4x split: agg8 26.2 (TTFA p99 0.63) / agg16 61.1 (1.07) /
+  agg24 77.2 with rtf_p99 24, TTFA p99 29, lat p99 32 s — DEEP COLLAPSE.
+- ours pipeline x8: agg8 26.5 (0.40) / agg16 57.5 (lone-stall cell,
+  exclude+rerun rule) / agg24 84.4 with TTFA p99 0.74 — CLEAN at the same
+  offered load where the default collapses.
+Ming STREAMING: NOT SERVABLE on this stack — streaming pipeline thinker
+OOMs at boot on GPU 0 at thinker fractions 0.72 and 0.60 (extra streaming
+stages on GPU0; possibly the yaml fraction does not reach the TP thinker in
+the streaming config path). LANDMINE recorded; per final-deliverable spec
+the Ming grid rows use non-streaming latency/rtf (mdef vs E1), TTFA = N/A.
+Higgs: hdef/hcol streaming cells (earlier) complete.
