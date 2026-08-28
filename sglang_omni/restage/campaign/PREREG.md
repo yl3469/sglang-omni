@@ -400,3 +400,47 @@ UNREGISTERED FINDING: goodput@SLO1.0s DROPS at qps12 (7.36 -> 6.28 qps).
   implemented, would need a fresh pre-registration.
 Baseline note: qps6 cells in both arms carry warmup contamination
   (first post-warm cell; p99 ~5.5 s both arms) -- excluded from grading.
+
+## VoxServe gate x restage plan, 4-arm iso-budget (pre-registered,
+## user-directed, 2026-08-28)
+
+User: "try adding the VoxServe line on top of the earlier restage
+comparison." Same testbed as voxgate (Qwen3-TTS-1.7B, B=1 GPU, streaming,
+open loop, qps {6,8,10,12}, n=30*rate): add the restage B=1 plan arm =
+coloc x2 on the one GPU (mem_fraction 0.42 each, the tts17 coloc_ts
+recipe, per-server rate R/2, sample-offset to disjoint inputs), with and
+without the gate. Four arms total: default_off/default_on (already
+measured, reused verbatim) + coloc_off/coloc_on (new).
+
+Predictions:
+  P4 (plan rescues the tail without the median cost): coloc_off at qps12
+     TTFA p99 <= 2.0 s AND p50 within 25% of default_off's 0.42 s.
+  P5 (complements, not substitutes): the gate on top of the plan is ~idle
+     because each engine sees half the load -> |TTFA p99 delta between
+     coloc_on and coloc_off| < 15% at every rate.
+  P6 (coloc throughput law holds at B=1): coloc_off delivered audio-s/s
+     >= 0.9x default_off at qps 10 and 12.
+Falsifiers: if coloc_off's p50 blows past 25% (sharing discount d bites
+harder on 0.5.18), the "no median cost" framing in RESULTS $13 must be
+retracted/weakened; if coloc_on beats coloc_off by >15%, gate+plan are
+NOT redundant and the complements claim needs upgrading to "additive".
+
+# VERDICT gate x plan 4-arm (voxgate coloc_*, 2026-08-28)
+
+Pooled a+b cells, 0 errors / 2160 new requests.
+P4 PASS: coloc_off qps12 TTFA p99 1.82 s (<= 2.0 bar; 2.2x vs default_off
+  3.93) with p50 0.427 vs 0.417 (+2.4%, << 25%) -> the plan rescues the
+  tail with NO median cost, now measured iso-testbed.
+P5 FAIL (both falsifier branches fire): gate-on-plan is NOT redundant.
+  qps12: 1.82 -> 1.07 s (-41%, ADDITIVE; goodput 9.50 -> 10.77, best
+  arm overall: p99 3.7x vs default_off, viability 98.1 vs 87.8%,
+  goodput +46%). qps10: 0.92 -> 1.69 s (+83%, HARMFUL). Same regime
+  dependence as on default -> upgraded claim: scheduling is additive to
+  placement past the saturation knee and harmful just below it,
+  regardless of placement.
+P6 PASS: coloc_off audio-s/s 45.7 (1.02x) @10, 52.9 (1.15x) @12 vs
+  default_off -> B=1 coloc law holds on 0.5.18.
+Cross-arm ranking @qps12 (p99 / viability / goodput@1s):
+  coloc_on 1.07 / 98.1% / 10.77  >  coloc_off 1.82 / 89.2% / 9.50
+  > default_on 1.71 / 92.8% / 6.28 > default_off 3.93 / 87.8% / 7.36.
+qps6 remains warmup-contaminated in all arms (excluded from grading).

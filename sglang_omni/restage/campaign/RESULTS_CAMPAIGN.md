@@ -434,3 +434,17 @@ follow-up queue + low-priority follow-up CUDA stream), while their
 baseline scheduler is unspecified. Their untested assertion that
 exploiting slack "does not degrade quality of service" is falsified
 under a strict SLO: median +67%, goodput@1s -15% at overload.
+
+4-arm extension (user-directed): the restage B=1 plan (coloc x2 on the
+same GPU, 0.42 mem-fraction, per-server rate/2) with and without the gate,
+same open-loop cells (voxgate/coloc_*, pooled a+b). Pre-registered
+verdicts: P4 PASS — the plan rescues the tail with NO median cost
+(qps12 p99 3.93 -> 1.82 s, p50 0.417 -> 0.427); P6 PASS — coloc
+throughput 1.02x/1.15x default at qps10/12. P5 FAILED in both directions:
+gate-on-plan is additive past the knee (qps12 p99 1.82 -> 1.07 s, -41%;
+goodput 9.50 -> 10.77, +46% over default — best arm on every metric:
+p99 3.7x, viability 98.1 vs 87.8%) and harmful just below it (qps10 p99
+0.92 -> 1.69 s, +83%). Revised takeaway: placement is the unconditional
+win; the scheduling gate is a regime-dependent additive on top —
+enable it only past the saturation knee (or make it adaptive).
+Figure: exp/slides/voxgate_figs.png (4 arms).
