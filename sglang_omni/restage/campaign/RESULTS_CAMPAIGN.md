@@ -422,3 +422,15 @@ non-emptiness) — left unimplemented pending a fresh pre-registration. Note
 the restage angle: the plan-level fix (a vocoder replica at the binding
 stage) removed the same tail without the median cost; scheduling-level and
 placement-level remedies are complements, not substitutes.
+
+Paper cross-check (arXiv:2602.00269, Sec 4.3.1 / Fig. 7): VoxServe's
+scheduler ablation claims ~2.5x lower p90 TTFA at fixed rate (CosyVoice
+2.0, 1xH100, p90 only, no costs reported). REPLICATES at overload: our
+qps12 p90 is 3.46 -> 1.36 s = 2.5x on a different model/hardware/engine.
+Does NOT replicate below the knee (their gains start at ~0.4x their
+saturation rate; ours appear only past it, with a regression at qps10) —
+because sglang-omni's baseline already embeds half of VoxServe (EDF
+follow-up queue + low-priority follow-up CUDA stream), while their
+baseline scheduler is unspecified. Their untested assertion that
+exploiting slack "does not degrade quality of service" is falsified
+under a strict SLO: median +67%, goodput@1s -15% at overload.
