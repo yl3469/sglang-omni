@@ -444,3 +444,41 @@ Cross-arm ranking @qps12 (p99 / viability / goodput@1s):
   coloc_on 1.07 / 98.1% / 10.77  >  coloc_off 1.82 / 89.2% / 9.50
   > default_on 1.71 / 92.8% / 6.28 > default_off 3.93 / 87.8% / 7.36.
 qps6 remains warmup-contaminated in all arms (excluded from grading).
+
+## Grid goodput row + e2sv2_agg16 remeasurement (2026-08-29, user-directed:
+## "update the original slides with the 3x3 figure", "goodput is a good
+## metric to include as well")
+
+Goodput@TTFA<=1s from existing grid per-request data: Qwen agg24 default
+1.17 qps vs plan 22.57 qps (19.2x — the throughput headline was only
+1.09x; goodput is where the plan actually pays). Higgs 100% viable +
+sub-second p99 in both arms at every load -> goodput = completed rate,
+default-is-the-plan extends to goodput. Ming: streaming N/A -> no goodput.
+DATA QUALITY: e2sv2_agg16 is contaminated (first post-warm cell, p99
+6.7 s at agg16 vs 0.74 at agg24, same signature as voxgate qps6) ->
+remeasure that ONE cell with a real warm (n=32) before it carries a
+goodput number. Prediction: clean rerun p99 in [0.4, 1.1] s (between
+agg8's 0.44 and agg24's 0.74) and goodput ~= completed ~= 15-16 qps.
+VoxServe line on the 3x3 Qwen column: NOT rerun — the omni code2wav
+already implements first-chunk-absolute-priority
+(select_step_participants, code2wav_scheduler.py:791), i.e. the VoxServe
+mechanism is in-stack; a "gate ON" arm would be a relabeled default.
+The default's 29 s tail is ENGINE queueing at deep overload, out of any
+vocoder scheduler's reach. The slide will state this + point to the
+measured 1-GPU 4-arm gate result.
+
+# VERDICT e2sv2_agg16 remeasurement (e2sv3_agg16, 2026-08-29)
+
+Clean rerun (proper 32-sample warm; two infra restarts along the way:
+a day-old dead-peer router squatting on 8007 [LANDMINE: routers are
+CPU-only, invisible to nvidia-smi cleanliness checks], then a transient
+HF-cache model_type read flake killed one worker boot; recovered by
+reusing the 4 healthy orphan workers). Result: TTFA p99 0.701 s (inside
+the pre-registered [0.4, 1.1]), viability 100%, goodput 14.71 ~=
+completed 14.77 qps (predicted 15-16, -2% under: PASS with note).
+The contaminated 6.7 s point is retired; plan curve now monotone
+0.44 -> 0.70 -> 0.74 across agg 8/16/24. Grid goodput row (@1s SLO):
+Qwen default [7.4, 15.4, 1.2] vs plan [7.5, 14.7, 22.6] -> 19.2x at
+agg24. Ming N/A (non-streaming). Higgs goodput = completed rate both
+arms (all cells 100% viable, sub-second p99): 84.0 vs 88.2 at agg96
+(1.05x, default-is-plan).

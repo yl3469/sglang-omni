@@ -448,3 +448,21 @@ p99 3.7x, viability 98.1 vs 87.8%) and harmful just below it (qps10 p99
 win; the scheduling gate is a regime-dependent additive on top —
 enable it only past the saturation knee (or make it adaptive).
 Figure: exp/slides/voxgate_figs.png (4 arms).
+
+## 14. Grid v2: goodput row + clean agg16 (user-directed)
+
+final_grid_figs.png rebuilt (generator: exp/slides/make_final_grid2.py):
+3 models x {TTFA p99, goodput@1s, latency p99, RTF p99} + improvement
+bars. New facts: (a) goodput@1s is the sharpest lens on the Qwen grid —
+default COLLAPSES from 15.4 to 1.2 qps between agg16 and agg24 while the
+plan climbs to 22.6 (19.2x at agg24; raw throughput showed only 1.09x);
+(b) e2sv2_agg16 (warmup-contaminated, p99 6.7 s) retired and remeasured
+as e2sv3_agg16 (p99 0.701 s, 100% viable, goodput 14.7 qps) — plan curve
+now monotone; (c) Higgs goodput = completed rate in both arms
+(default-is-plan extends to goodput, 1.05x at agg96); (d) Ming goodput
+N/A (streaming boot OOM). VoxServe note on the Qwen column: first-chunk
+priority is already in-stack (code2wav select_step_participants); the
+default's 29 s tail is engine queueing — unreachable by any vocoder
+schedule, fixed only by placement. Ops landmine recorded: CPU-only
+routers are invisible to nvidia-smi cleanliness checks (a day-old
+dead-peer router on 8007 cost two run restarts).
