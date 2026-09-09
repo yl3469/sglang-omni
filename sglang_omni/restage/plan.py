@@ -13,6 +13,9 @@ MEASURED for a new workload.
 import argparse
 import math
 import os
+import re
+import textwrap
+from collections import Counter
 
 from .workload import Workload, SGLANG_OMNI_QWEN3_LAW
 from . import models as MODELS
@@ -212,6 +215,12 @@ def launcher_lines(name, model_path, ports=(8040, 8041, 8042)):
     return []
 
 
+def layout_summary(layout):
+    """Compact one-line layout: 'thinker x3 | tails x3 shared' style."""
+    counts = Counter(stage for stage, _ in layout)
+    return " | ".join(("%s x%d" % (s, n)) if n > 1 else s for s, n in counts.items())
+
+
 def detect_gpu_mem_gib():
     """Per-GPU memory of the local node, or None when undetectable.
 
@@ -297,12 +306,29 @@ def main():
     print("Workload: L=%d tok, D=%.1f s, rtf_p99<=%.1f | law: %s"
           % (wl.context_tokens, wl.audio_seconds, wl.slo_rtf, law.source))
     print("GPU mem: %.0f GiB/GPU (%s)" % (gpu_mem, mem_src))
-    print("%-26s %10s  %s" % ("plan", "audio-s/s", "provenance"))
-    for name, agg, prov, _ in rows:
-        print("%-26s %10.1f  %s" % (name, agg, prov))
+    # ranked table with deduplicated provenance footnotes: most rows share
+    # the same long string, so repeating it per row buries the ranking
+    notes, marks = [], {}
+    print()
+    print(" #  %-26s %10s  %-9s  %-34s %s"
+          % ("plan", "audio-s/s", "basis", "layout", "notes"))
+    print("-" * 96)
+    for i, (name, agg, prov, layout) in enumerate(rows, 1):
+        # the N/GPU factor is visible in the layout column; drop it from the
+        # footnote key so all coloc rows of one sharing mode share a note
+        key = re.sub(r"x \d+/GPU ", "", prov)
+        if key not in marks:
+            notes.append(key)
+            marks[key] = "[%d]" % len(notes)
+        basis = "PREDICTED" if ("PREDICTED" in prov or "PRIOR" in prov) else "MEASURED"
+        print("%2d  %-26s %10.1f  %-9s  %-34s %s"
+              % (i, name, agg, basis, layout_summary(layout)[:34], marks[key]))
+    print("\nnotes:")
+    for i, n in enumerate(notes, 1):
+        print(textwrap.fill(n, width=94, initial_indent=" [%d] " % i,
+                            subsequent_indent="     "))
     best = rows[0]
     print("\nCHOSEN: %s (%.1f audio-s/s, sglang-omni, %s)" % (best[0], best[1], "PREDICTED" if ("PREDICTED" in best[2] or "PRIOR" in best[2]) else "MEASURED"))
-    print("  provenance: %s" % best[2])
 
     if not entry.servable:
         print("\nNo launch emitted: %s has no sglang-omni implementation. The plan"
