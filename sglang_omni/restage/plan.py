@@ -26,8 +26,8 @@ Z99 = 2.326
 # measured 0.51 / 0.76-0.93. Caveat: consolidated pipelines exceed rtf99 1
 # at c8 (ts 1.46-1.65, mps 0.94-1.32) -- throughput-ratio d; the QoS-gated
 # consolidation win on sglang-omni is not established.
-D_TS = (0.58, "MEASURED sglang-omni sgl-dm 20057386 (h020, matched c8 ratio; consolidated rtf99>1 at c8)")
-D_MPS = (0.85, "MEASURED sglang-omni sgl-dm 20057386 (h020, matched c8 ratio; consolidated rtf99 0.94-1.32 at c8)")
+D_TS = (0.58, "MEASURED sgl-dm 20057386 (matched c8; consolidated rtf99>1 at c8)")
+D_MPS = (0.85, "MEASURED sgl-dm 20057386 (matched c8; consolidated rtf99 0.94-1.32)")
 
 # measured sglang-omni anchors, per 2-GPU unit (2xH100, L=6343 unique-prefix
 # long context; sgl-3arm 19589494 arms A/B, sgl-solv5 19591990 arm C):
@@ -51,7 +51,7 @@ def candidates(gpus, wl, law):
     delta = law.delta(wl.context_tokens)
     k1 = kappa_lower(T1, delta, wl.audio_seconds)
     rho = T1 / max(k1, 1.0)
-    pred = "PREDICTED(law: %s)" % law.source
+    pred = "PREDICTED(law)"   # full law source is printed once in the header
     unit = min(k1, 1e9) * rho            # per 2-GPU unit (thinker + tails), from the law
     # If the law is uncalibrated but the workload sits at the measured sglang
     # anchor (L~6343, D~4.5), prefer scaling the MEASURED no-TP unit over a
@@ -121,9 +121,11 @@ def candidates_for_model(entry, gpus, wl, law, gpu_mem_gib=80.0):
     T1 = law.T_sat(wl.audio_seconds, wl.context_tokens)
     delta = law.delta(wl.context_tokens)
     k1 = kappa_lower(T1, delta, wl.audio_seconds)
-    pred = "PREDICTED(law: %s; constants: %s)" % (law.source, entry.provenance.split(";")[0])
-    d_prior = (("timeslice", D_TS[0], "PRIOR: qwen3-omni tails d(ts)=0.58 reused (cross-model band 0.41-0.58)"),
-               ("mps", D_MPS[0], "PRIOR: qwen3-omni tails d(mps)=0.85 reused (cross-model band 0.64-0.93)"))
+    # full law source + registry constants are printed once in the header
+    # ("Workload: ... | law:" and "Constants:"); rows carry short tags
+    pred = "PREDICTED(law)"
+    d_prior = (("timeslice", D_TS[0], "PRIOR: qwen3-omni d(ts) reused, band 0.41-0.58"),
+               ("mps", D_MPS[0], "PRIOR: qwen3-omni d(mps) reused, band 0.64-0.93"))
 
     if entry.backbone_gib is not None and entry.backbone_gib > gpu_mem_gib:
         # arithmetic wall: one backbone does not fit one GPU -> TP mandatory
@@ -163,7 +165,7 @@ def candidates_for_model(entry, gpus, wl, law, gpu_mem_gib=80.0):
                 continue
             for mode, d, dprov in d_prior:
                 yield ("coloc%d_%s_per_gpu" % (n, mode), gpus * n * unit * d,
-                       "%s x %d/GPU x d[%s]=%.2f UPPER BOUND (%s; true d -> 1/n if one engine already saturates)"
+                       "%s x %d/GPU x d[%s]=%.2f UPPER BOUND (true d -> 1/n at saturation; %s)"
                        % (pred, n, mode, d, dprov),
                        [("%d engines shared" % n, [g]) for g in range(gpus)])
     elif total_w is not None:

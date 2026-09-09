@@ -63,8 +63,8 @@ _reg(ModelEntry(
         "handtuned_notp": (15.33, "MEASURED sglang-omni 2xH100 sgl-3arm 19589494 (0.82/0.40 no-TP; c8 rtf99 0.985 -- single run, marginal)"),
         "tp2": (9.97, "MEASURED sglang-omni 2xH100 sgl-solv5 19591990 (TP2 thinker @ fraction 0.62; loses at QoS -- compute-bound)"),
     },
-    provenance="anchors MEASURED (sglang-omni 2xH100); weights/kv PRIOR from the "
-               "vLLM-Omni engine logs (same checkpoint; sglang log values not recorded)",
+    provenance="anchors MEASURED (sglang-omni 2xH100); weights/kv PRIOR from "
+               "same-checkpoint engine logs (sglang log values not recorded)",
     notes="the campaign's measured model; thinker + talker + code2wav stages",
 ))
 
@@ -75,9 +75,9 @@ _reg(ModelEntry(
     backbone_gib=3.4, tails_gib=1.0,
     kv_bytes_per_tok=20480,
     default_workload=Workload(250, 4.2, name="short-text TTS"),
-    provenance="PRIOR: weights/kv from the vLLM-Omni campaign logs (same "
-               "checkpoint family); NO sglang-omni measurement exists -- "
-               "never quote the vLLM-Omni 26.1->41.7 line for this stack",
+    provenance="PRIOR: weights/kv from same-checkpoint-family engine logs; "
+               "NO sglang-omni measurement exists -- do not quote cross-stack "
+               "throughput lines here",
     notes="single-LM TTS + code2wav tail; sglang_omni/models/qwen3_tts",
 ))
 
