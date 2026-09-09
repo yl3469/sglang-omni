@@ -210,6 +210,33 @@ def launcher_lines(name, model_path, ports=(8040, 8041, 8042)):
     return []
 
 
+def detect_gpu_mem_gib():
+    """Per-GPU memory of the local node, or None when undetectable.
+
+    nvidia-smi first (no CUDA context, works while servers hold the GPUs),
+    torch as fallback. The planner's memory-feasibility decisions (engine
+    fit, coloc fan-in, TP-mandatory walls) flip with this number, so a
+    hardcoded default is only used as a last resort -- and printed.
+    """
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=10)
+        vals = [float(x) for x in out.stdout.split()]
+        if vals:
+            return min(vals) / 1024.0
+    except Exception:
+        pass
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return torch.cuda.get_device_properties(0).total_memory / (1 << 30)
+    except Exception:
+        pass
+    return None
+
+
 CALIBRATION = """# Calibration probes for this workload (turn PREDICTED into MEASURED):
 # 1. single-request probe -> delta, weights, overheads (read server log + ttft)
 #    run one server (any layout), send 3 requests at concurrency 1
@@ -226,7 +253,9 @@ def main():
                     help="registry key (see --list-models)")
     ap.add_argument("--list-models", action="store_true")
     ap.add_argument("--gpus", type=int, default=4)
-    ap.add_argument("--gpu-mem-gib", type=float, default=80.0)
+    ap.add_argument("--gpu-mem-gib", type=float, default=None,
+                    help="per-GPU memory; default: auto-detect on this node "
+                         "(pass explicitly when planning for another node)")
     ap.add_argument("--context-tokens", type=int, default=None)
     ap.add_argument("--audio-seconds", type=float, default=None)
     ap.add_argument("--slo-rtf", type=float, default=1.0)
@@ -249,7 +278,14 @@ def main():
         args.slo_rtf, name=entry.default_workload.name)
     model_path = args.model_path or entry.hf_id
     law = SGLANG_OMNI_QWEN3_LAW
-    rows = sorted(candidates_for_model(entry, args.gpus, wl, law, args.gpu_mem_gib),
+    gpu_mem = args.gpu_mem_gib
+    mem_src = "flag"
+    if gpu_mem is None:
+        gpu_mem = detect_gpu_mem_gib()
+        mem_src = "auto-detected"
+    if gpu_mem is None:
+        gpu_mem, mem_src = 80.0, "FALLBACK (no GPU visible) -- pass --gpu-mem-gib"
+    rows = sorted(candidates_for_model(entry, args.gpus, wl, law, gpu_mem),
                   key=lambda r: -r[1])
 
     print("Stack: sglang-omni | model: %s (%s, %s)"
@@ -258,6 +294,7 @@ def main():
     print("Constants: %s" % entry.provenance)
     print("Workload: L=%d tok, D=%.1f s, rtf_p99<=%.1f | law: %s"
           % (wl.context_tokens, wl.audio_seconds, wl.slo_rtf, law.source))
+    print("GPU mem: %.0f GiB/GPU (%s)" % (gpu_mem, mem_src))
     print("%-26s %10s  %s" % ("plan", "audio-s/s", "provenance"))
     for name, agg, prov, _ in rows:
         print("%-26s %10.1f  %s" % (name, agg, prov))
